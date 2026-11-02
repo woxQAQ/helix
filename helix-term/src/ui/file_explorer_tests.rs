@@ -54,6 +54,95 @@ fn git(root: &Path, args: &[&str]) -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn mouse_scrolling_preserves_selection_and_keyboard_reveals_it() -> anyhow::Result<()> {
+    use helix_view::input::{KeyModifiers, MouseEvent};
+
+    let directory = tempfile::tempdir()?;
+    let root = directory.path().canonicalize()?;
+    for index in 0..30 {
+        std::fs::write(root.join(format!("file-{index:02}.txt")), "contents\n")?;
+    }
+    let mut editor = application()?.editor;
+    let mut explorer = FileExplorer::new(root, &editor)?;
+    let area = Rect::new(0, 0, 80, 12);
+    explorer.layout(area, 30);
+    let height = usize::from(explorer.area.height - 1);
+    let mut surface = Surface::empty(area);
+    explorer.render(&mut surface, &editor);
+    assert_eq!(surface.get(29, 0).unwrap().symbol.as_str(), "│");
+    assert_eq!(surface.get(29, 1).unwrap().symbol.as_str(), "▐");
+
+    let scroll = |kind| {
+        Event::Mouse(MouseEvent {
+            kind,
+            column: 3,
+            row: 2,
+            modifiers: KeyModifiers::empty(),
+        })
+    };
+    explorer.handle_event(&scroll(MouseEventKind::ScrollDown), &mut editor);
+    explorer.render(&mut surface, &editor);
+    assert_eq!(explorer.selected, 0);
+    assert_eq!(explorer.offset, 3);
+    let first_row: String = (0..29)
+        .map(|x| surface.get(x, 1).unwrap().symbol.as_str())
+        .collect();
+    assert!(first_row.contains("file-03.txt"));
+    // Repeated redraws must not pull the viewport back to the selection.
+    explorer.render(&mut surface, &editor);
+    assert_eq!(explorer.offset, 3);
+    for _ in 0..20 {
+        explorer.handle_event(&scroll(MouseEventKind::ScrollDown), &mut editor);
+    }
+    explorer.render(&mut surface, &editor);
+    assert_eq!(explorer.offset, explorer.entries.len() - height);
+    assert_eq!(explorer.selected, 0);
+    assert_eq!(
+        surface
+            .get(29, explorer.area.bottom() - 1)
+            .unwrap()
+            .symbol
+            .as_str(),
+        "▐"
+    );
+
+    explorer.handle_event(&Event::Key(key!('j')), &mut editor);
+    explorer.render(&mut surface, &editor);
+    assert_eq!(explorer.selected, 1);
+    assert_eq!(explorer.offset, 1);
+    explorer.handle_event(&Event::Key(key!(End)), &mut editor);
+    explorer.render(&mut surface, &editor);
+    assert_eq!(explorer.selected, 29);
+    assert_eq!(explorer.offset, 20);
+    for _ in 0..20 {
+        explorer.handle_event(&scroll(MouseEventKind::ScrollUp), &mut editor);
+    }
+    explorer.render(&mut surface, &editor);
+    assert_eq!(explorer.offset, 0);
+    assert_eq!(explorer.selected, 29);
+
+    // Clicking a row resolves the entry from the scrolled viewport.
+    explorer.handle_event(&scroll(MouseEventKind::ScrollDown), &mut editor);
+    explorer.render(&mut surface, &editor);
+    let clicked = explorer.entries[4].path.clone();
+    explorer.handle_event(
+        &scroll(MouseEventKind::Down(MouseButton::Left)),
+        &mut editor,
+    );
+    assert_eq!(explorer.selected, 4);
+    assert_eq!(helix_view::doc!(editor).path(), Some(clicked.as_path()));
+
+    // Resizing to fit all entries removes the scrollbar and clamps the offset.
+    let large = Rect::new(0, 0, 80, 40);
+    explorer.layout(large, 30);
+    let mut surface = Surface::empty(large);
+    explorer.render(&mut surface, &editor);
+    assert_eq!(explorer.offset, 0);
+    assert!((0..explorer.area.height).all(|y| surface.get(29, y).unwrap().symbol.as_str() == "│"));
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn binary_files_are_delegated_and_text_controls_stay_in_the_view() -> anyhow::Result<()> {
     use crate::{
         compositor::{Component, Context},
@@ -310,6 +399,7 @@ async fn git_status_badges_and_directory_summaries() -> anyhow::Result<()> {
             .position(|entry| entry.path.file_name().unwrap() == name)
             .unwrap();
         explorer.selected = index;
+        explorer.reveal_selection = true;
         for focused in [true, false] {
             explorer.focused = focused;
             let mut surface = Surface::empty(area);

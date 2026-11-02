@@ -114,6 +114,7 @@ pub(super) struct FileExplorer {
     entries: Vec<Entry>,
     selected: usize,
     offset: usize,
+    reveal_selection: bool,
     area: Rect,
     git_status: Arc<ArcSwap<HashMap<PathBuf, GitStatuses>>>,
     pub focused: bool,
@@ -134,6 +135,7 @@ impl FileExplorer {
             entries,
             selected: 0,
             offset: 0,
+            reveal_selection: true,
             area: Rect::default(),
             git_status: Arc::new(ArcSwap::from_pointee(HashMap::new())),
             focused: true,
@@ -261,6 +263,7 @@ impl FileExplorer {
             entries: Self::children(&self.root, 0, editor)?,
             selected: 0,
             offset: self.offset,
+            reveal_selection: self.reveal_selection,
             area: self.area,
             git_status: self.git_status.clone(),
             focused: self.focused,
@@ -323,6 +326,9 @@ impl FileExplorer {
         if self.focused && matches!(event, Event::Key(_) | Event::Paste(_)) {
             editor.status_msg = None;
             editor.reset_idle_timer();
+            if matches!(event, Event::Key(_)) {
+                self.reveal_selection = true;
+            }
         }
         let result: anyhow::Result<()> = match event {
             Event::Mouse(mouse) => {
@@ -352,12 +358,24 @@ impl FileExplorer {
                             let index = self.offset + usize::from(mouse.row - self.area.y - 1);
                             if index < self.entries.len() {
                                 self.selected = index;
+                                self.reveal_selection = true;
                                 return self.activate(editor, Action::Replace);
                             }
                         }
                     }
-                    MouseEventKind::ScrollUp => self.move_selection(-3),
-                    MouseEventKind::ScrollDown => self.move_selection(3),
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                        let amount = if mouse.kind == MouseEventKind::ScrollUp {
+                            -3
+                        } else {
+                            3
+                        };
+                        let height = usize::from(self.area.height.saturating_sub(1));
+                        self.offset = self
+                            .offset
+                            .saturating_add_signed(amount)
+                            .min(self.entries.len().saturating_sub(height));
+                        self.reveal_selection = false;
+                    }
                     _ => {}
                 }
                 return Outcome::Consumed;
@@ -455,7 +473,11 @@ impl FileExplorer {
             self.focused = false;
             0
         };
-        self.area = area.clip_bottom(1).with_width(width);
+        let explorer_area = area.clip_bottom(1).with_width(width);
+        if explorer_area.height != self.area.height {
+            self.reveal_selection = true;
+        }
+        self.area = explorer_area;
         Rect::new(area.x + width, area.y, area.width - width, area.height)
     }
 
@@ -496,9 +518,13 @@ impl FileExplorer {
         root_status.render(area.right() - 1, area.y, surface, theme, header_style);
 
         let height = usize::from(area.height - 1);
-        self.offset = self.offset.min(self.selected);
-        if self.selected >= self.offset + height {
-            self.offset = self.selected + 1 - height;
+        // Mouse scrolling may leave the selection outside the viewport.
+        if self.reveal_selection {
+            self.offset = self.offset.min(self.selected);
+            if self.selected >= self.offset + height {
+                self.offset = self.selected + 1 - height;
+            }
+            self.reveal_selection = false;
         }
         self.offset = self.offset.min(self.entries.len().saturating_sub(height));
         for (row, entry) in self
@@ -576,6 +602,14 @@ impl FileExplorer {
         }
         for y in area.y..area.bottom() {
             surface.set_stringn(area.right() - 1, y, "│", 1, theme.get("ui.window"));
+        }
+        if self.entries.len() > height && height > 0 {
+            let thumb_height = (height * height).div_ceil(self.entries.len());
+            let thumb_top = (height - thumb_height) * self.offset / (self.entries.len() - height);
+            let style = theme.get("ui.window").patch(theme.get("ui.menu.scroll"));
+            for row in thumb_top..thumb_top + thumb_height {
+                surface.set_stringn(area.right() - 1, area.y + 1 + row as u16, "▐", 1, style);
+            }
         }
     }
 }

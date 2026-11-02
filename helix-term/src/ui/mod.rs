@@ -14,6 +14,7 @@ pub mod prompt;
 mod select;
 mod spinner;
 mod statusline;
+pub mod terminal;
 mod text;
 mod text_decorations;
 

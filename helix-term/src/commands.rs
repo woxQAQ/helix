@@ -402,6 +402,7 @@ impl MappableCommand {
         file_picker, "Open file picker",
         file_picker_in_current_buffer_directory, "Open file picker at current buffer's directory",
         file_picker_in_current_directory, "Open file picker at current working directory",
+        lazygit, "Open lazygit in a floating terminal",
         toggle_file_explorer, "Toggle file explorer sidebar",
         focus_file_explorer, "Focus file explorer sidebar",
         file_explorer, "Open file explorer in workspace root",
@@ -3206,6 +3207,12 @@ fn file_picker_in_current_directory(cx: &mut Context) {
     }
     let picker = ui::file_picker(cx.editor, cwd);
     cx.push_layer(Box::new(overlaid(picker)));
+}
+
+fn lazygit(cx: &mut Context) {
+    cx.callback.push(Box::new(|compositor, context| {
+        ui::terminal::open_lazygit(context.editor, compositor);
+    }));
 }
 
 fn toggle_file_explorer(cx: &mut Context) {

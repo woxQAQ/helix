@@ -51,6 +51,8 @@ helix-vcs = { path = "../helix-vcs" }
 helix-loader = { path = "../helix-loader" }
 
 anyhow = "1"
+portable-pty = "0.9"
+vt100 = "0.16"
 
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-util", "io-std", "time", "process", "macros", "fs", "parking_lot"] }
 tui = { path = "../helix-tui", package = "helix-tui", default-features = false, features = ["termina", "crossterm"] }

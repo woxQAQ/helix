@@ -2649,6 +2649,17 @@ fn pipe_impl(
     Ok(())
 }
 
+fn lazygit(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event == PromptEvent::Validate {
+        cx.jobs.callback(async {
+            Ok(job::Callback::EditorCompositor(Box::new(
+                ui::terminal::open_lazygit,
+            )))
+        });
+    }
+    Ok(())
+}
+
 fn run_shell_command(
     cx: &mut compositor::Context,
     args: Args,
@@ -3965,6 +3976,17 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         fun: pipe_to,
         completer: SHELL_COMPLETER,
         signature: SHELL_SIGNATURE,
+    },
+    TypableCommand {
+        name: "lazygit",
+        aliases: &[],
+        doc: "Open lazygit in a floating terminal in the workspace root. Ctrl-g closes it.",
+        fun: lazygit,
+        completer: CommandCompleter::none(),
+        signature: Signature {
+            positionals: (0, Some(0)),
+            ..Signature::DEFAULT
+        },
     },
     TypableCommand {
         name: "run-shell-command",

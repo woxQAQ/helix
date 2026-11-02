@@ -235,6 +235,7 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
             "d" => diagnostics_picker,
             "D" => workspace_diagnostics_picker,
             "g" => changed_file_picker,
+            "l" => lazygit,
             "a" => code_action,
             "'" => last_picker,
             "G" => { "Debug (experimental)" sticky=true

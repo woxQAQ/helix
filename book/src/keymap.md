@@ -301,6 +301,7 @@ This layer is a kludge of mappings, mostly pickers.
 | `b`     | Open buffer picker                                                      | `buffer_picker`                            |
 | `j`     | Open jumplist picker                                                    | `jumplist_picker`                          |
 | `g`     | Open changed file picker                                                | `changed_file_picker`                      |
+| `l`     | Open lazygit in a floating terminal                                      | `lazygit`                                  |
 | `G`     | Debug (experimental)                                                    | N/A                                        |
 | `k`     | Show documentation for item under cursor in a [popup](#popup) (**LSP**) | `hover`                                    |
 | `s`     | Open document symbol picker (**LSP** or **TS**)                         | `lsp_or_syntax_symbol_picker`              |
@@ -324,6 +325,24 @@ This layer is a kludge of mappings, mostly pickers.
 | `?`     | Open command palette                                                    | `command_palette`                          |
 
 > 💡 Global search displays results in a fuzzy picker, use `Space + '` to bring it back up after opening a file.
+
+##### Lazygit
+
+Press `Space l` or run `:lazygit` to open [lazygit](https://github.com/jesseduffield/lazygit)
+in a centered floating terminal at the workspace root. The `lazygit` executable
+must be available on `PATH`.
+
+Keyboard input, mouse input, and pasted text are forwarded to lazygit. Use its
+normal quit action to return to the editor, or press `Ctrl-g` to close the
+floating terminal and terminate the process. `Esc` is forwarded to lazygit.
+The floating terminal follows editor window size changes.
+
+To use another key, bind the `lazygit` command in your configuration:
+
+```toml
+[keys.normal.space]
+l = "lazygit"
+```
 
 ##### Popup
 

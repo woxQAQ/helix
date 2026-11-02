@@ -1,0 +1,466 @@
+//! An interactive PTY rendered as a modal editor layer.
+use std::{
+    io::{Read, Write},
+    path::Path,
+    sync::Arc,
+};
+
+use anyhow::Context as _;
+use helix_core::Position;
+use helix_view::{
+    graphics::{Color, CursorKind, Modifier, Rect, Style, UnderlineStyle},
+    input::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
+    Editor,
+};
+use parking_lot::Mutex;
+use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize};
+use tokio::sync::mpsc;
+use tui::{
+    buffer::Buffer,
+    widgets::{Block, Widget},
+};
+
+use crate::{
+    compositor::{Component, Context, Event, EventResult},
+    job,
+};
+
+pub fn open_lazygit(editor: &mut Editor, compositor: &mut crate::compositor::Compositor) {
+    if compositor.find::<FloatingTerminal>().is_some() {
+        return;
+    }
+    match FloatingTerminal::lazygit(&helix_loader::find_workspace().0, compositor.size()) {
+        Ok(terminal) => compositor.push(Box::new(terminal)),
+        Err(err) => editor.set_error(format!("{err:#}")),
+    }
+}
+
+pub struct FloatingTerminal {
+    master: Box<dyn MasterPty + Send>,
+    killer: Option<Box<dyn ChildKiller + Send + Sync>>,
+    parser: Arc<Mutex<vt100::Parser>>,
+    input: mpsc::UnboundedSender<Vec<u8>>,
+    area: Rect,
+}
+
+impl FloatingTerminal {
+    pub fn new(mut command: CommandBuilder, area: Rect) -> anyhow::Result<Self> {
+        let area = Self::inner_area(area);
+        anyhow::ensure!(
+            area.width > 0 && area.height > 0,
+            "Terminal is too small for lazygit"
+        );
+        command.env("TERM", "xterm-256color");
+        // The child speaks the terminal protocol we implement, independently of the host.
+        command.env_remove("TERM_PROGRAM");
+        command.env_remove("TERM_PROGRAM_VERSION");
+        let pair = portable_pty::native_pty_system().openpty(Self::pty_size(area))?;
+        let mut reader = pair.master.try_clone_reader()?;
+        let mut writer = pair.master.take_writer()?;
+        let mut child = pair
+            .slave
+            .spawn_command(command)
+            .context("Failed to start lazygit (is it installed and on PATH?)")?;
+        drop(pair.slave);
+        let killer = child.clone_killer();
+        let parser = Arc::new(Mutex::new(vt100::Parser::new(area.height, area.width, 0)));
+        let (output_tx, mut output_rx) = mpsc::channel::<Vec<u8>>(16);
+        let (input, mut input_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        tokio::task::spawn_blocking(move || {
+            while let Some(bytes) = input_rx.blocking_recv() {
+                if writer
+                    .write_all(&bytes)
+                    .and_then(|()| writer.flush())
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        let output = tokio::task::spawn_blocking(move || {
+            let mut buffer = [0; 8192];
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(count) => {
+                        if output_tx.blocking_send(buffer[..count].to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                    Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+                    // Linux PTYs report EIO when the slave closes.
+                    Err(_) => break,
+                }
+            }
+            drop(output_tx);
+            child.wait()
+        });
+        let screen = parser.clone();
+        tokio::spawn(async move {
+            while let Some(bytes) = output_rx.recv().await {
+                screen.lock().process(&bytes);
+                helix_event::request_redraw();
+            }
+            let result = output.await;
+            job::dispatch(move |editor, compositor| {
+                // A previous process must never close a newly opened terminal.
+                let Some(terminal) = compositor.find::<Self>() else {
+                    return;
+                };
+                if !Arc::ptr_eq(&terminal.parser, &screen) {
+                    return;
+                }
+                // The process has already been reaped; its PID may now be reused.
+                terminal.killer = None;
+                compositor.remove_type::<Self>();
+                match result {
+                    Ok(Ok(status)) if status.success() => (),
+                    Ok(Ok(status)) => editor.set_error(format!("lazygit exited: {status}")),
+                    Ok(Err(err)) => editor.set_error(format!("Failed to wait for lazygit: {err}")),
+                    Err(err) => editor.set_error(format!("Terminal task failed: {err}")),
+                }
+                helix_event::request_redraw();
+            })
+            .await;
+        });
+        Ok(Self {
+            master: pair.master,
+            killer: Some(killer),
+            parser,
+            input,
+            area,
+        })
+    }
+
+    pub fn lazygit(directory: &Path, area: Rect) -> anyhow::Result<Self> {
+        let mut command = CommandBuilder::new("lazygit");
+        command.cwd(directory);
+        Self::new(command, area)
+    }
+
+    fn outer_area(area: Rect) -> Rect {
+        let margin_x = area.width / 20;
+        let margin_y = area.height / 20;
+        Rect::new(
+            area.x + margin_x,
+            area.y + margin_y,
+            area.width - 2 * margin_x,
+            area.height - 2 * margin_y,
+        )
+    }
+
+    fn inner_area(area: Rect) -> Rect {
+        Block::bordered().inner(Self::outer_area(area))
+    }
+
+    fn pty_size(area: Rect) -> PtySize {
+        PtySize {
+            rows: area.height,
+            cols: area.width,
+            pixel_width: 0,
+            pixel_height: 0,
+        }
+    }
+
+    fn send(&self, bytes: Vec<u8>, cx: &mut Context) {
+        if !bytes.is_empty() && self.input.send(bytes).is_err() {
+            cx.editor.set_error("The lazygit terminal has closed");
+        }
+    }
+}
+
+impl Drop for FloatingTerminal {
+    fn drop(&mut self) {
+        if let Some(killer) = &mut self.killer {
+            let _ = killer.kill();
+        }
+    }
+}
+
+impl Component for FloatingTerminal {
+    fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
+        match event {
+            Event::Key(key)
+                if key.code == KeyCode::Char('g') && key.modifiers == KeyModifiers::CONTROL =>
+            {
+                return EventResult::Consumed(Some(Box::new(|compositor, _| {
+                    compositor.remove_type::<Self>();
+                })));
+            }
+            Event::Key(key) => {
+                let application_cursor = self.parser.lock().screen().application_cursor();
+                self.send(encode_key(*key, application_cursor), cx);
+            }
+            Event::Paste(text) => {
+                let bytes = if self.parser.lock().screen().bracketed_paste() {
+                    format!("\x1b[200~{text}\x1b[201~").into_bytes()
+                } else {
+                    text.replace('\n', "\r").into_bytes()
+                };
+                self.send(bytes, cx);
+            }
+            Event::Mouse(mouse) => {
+                let parser = self.parser.lock();
+                let bytes = encode_mouse(mouse, self.area, parser.screen());
+                drop(parser);
+                self.send(bytes, cx);
+            }
+            Event::Resize(_, _) => return EventResult::Ignored(None),
+            _ => (),
+        }
+        EventResult::Consumed(None)
+    }
+
+    fn render(&mut self, area: Rect, surface: &mut Buffer, cx: &mut Context) {
+        let outer = Self::outer_area(area);
+        let inner = Self::inner_area(area);
+        if inner.width == 0 || inner.height == 0 {
+            self.area = inner;
+            return;
+        }
+        if inner.width != self.area.width || inner.height != self.area.height {
+            if let Err(err) = self.master.resize(Self::pty_size(inner)) {
+                cx.editor
+                    .set_error(format!("Failed to resize lazygit: {err}"));
+            }
+            self.parser
+                .lock()
+                .screen_mut()
+                .set_size(inner.height, inner.width);
+        }
+        self.area = inner;
+        for y in outer.top()..outer.bottom() {
+            for x in outer.left()..outer.right() {
+                surface[(x, y)].reset();
+            }
+        }
+        Block::bordered()
+            .title(" lazygit · Ctrl-g: close ")
+            .style(
+                cx.editor
+                    .theme
+                    .get("ui.background")
+                    .patch(cx.editor.theme.get("ui.text")),
+            )
+            .border_style(cx.editor.theme.get("ui.text.inactive"))
+            .render(outer, surface);
+        let parser = self.parser.lock();
+        for row in 0..inner.height {
+            for col in 0..inner.width {
+                let Some(cell) = parser.screen().cell(row, col) else {
+                    continue;
+                };
+                if cell.is_wide_continuation() {
+                    continue;
+                }
+                let mut style = Style::default()
+                    .fg(color(cell.fgcolor()))
+                    .bg(color(cell.bgcolor()));
+                for (enabled, modifier) in [
+                    (cell.bold(), Modifier::BOLD),
+                    (cell.dim(), Modifier::DIM),
+                    (cell.italic(), Modifier::ITALIC),
+                    (cell.inverse(), Modifier::REVERSED),
+                ] {
+                    if enabled {
+                        style = style.add_modifier(modifier);
+                    }
+                }
+                if cell.underline() {
+                    style = style.underline_style(UnderlineStyle::Line);
+                }
+                let text = if cell.has_contents() {
+                    cell.contents()
+                } else {
+                    " "
+                };
+                surface.set_stringn(
+                    inner.x + col,
+                    inner.y + row,
+                    text,
+                    (inner.width - col) as usize,
+                    style,
+                );
+            }
+        }
+    }
+
+    fn cursor(&self, _area: Rect, _editor: &Editor) -> (Option<Position>, CursorKind) {
+        let parser = self.parser.lock();
+        let screen = parser.screen();
+        let (row, col) = screen.cursor_position();
+        if screen.hide_cursor() || row >= self.area.height || col >= self.area.width {
+            return (None, CursorKind::Hidden);
+        }
+        (
+            Some(Position::new(
+                (self.area.y + row) as usize,
+                (self.area.x + col) as usize,
+            )),
+            CursorKind::Block,
+        )
+    }
+}
+
+fn color(color: vt100::Color) -> Color {
+    match color {
+        vt100::Color::Default => Color::Reset,
+        vt100::Color::Idx(index) => Color::Indexed(index),
+        vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+    }
+}
+
+fn encode_key(key: KeyEvent, application_cursor: bool) -> Vec<u8> {
+    let modifiers = key.modifiers;
+    let parameter = 1
+        + u8::from(modifiers.contains(KeyModifiers::SHIFT))
+        + 2 * u8::from(modifiers.contains(KeyModifiers::ALT))
+        + 4 * u8::from(modifiers.contains(KeyModifiers::CONTROL));
+    let mut bytes = Vec::new();
+    match key.code {
+        KeyCode::Char(ch) => {
+            if modifiers.contains(KeyModifiers::ALT) {
+                bytes.push(0x1b);
+            }
+            if modifiers.contains(KeyModifiers::CONTROL) {
+                match ch {
+                    '@' | ' ' | '2' => bytes.push(0),
+                    'a'..='z' => bytes.push(ch as u8 - b'a' + 1),
+                    'A'..='_' => bytes.push(ch as u8 - b'A' + 1),
+                    '?' | '8' => bytes.push(0x7f),
+                    _ => (),
+                }
+            } else {
+                bytes.extend_from_slice(ch.encode_utf8(&mut [0; 4]).as_bytes());
+            }
+        }
+        KeyCode::Tab if modifiers.contains(KeyModifiers::SHIFT) => {
+            bytes.extend_from_slice(b"\x1b[Z")
+        }
+        KeyCode::Enter | KeyCode::Tab | KeyCode::Backspace | KeyCode::Esc => {
+            if modifiers.contains(KeyModifiers::ALT) {
+                bytes.push(0x1b);
+            }
+            bytes.push(match key.code {
+                KeyCode::Enter => b'\r',
+                KeyCode::Tab => b'\t',
+                KeyCode::Backspace => 0x7f,
+                _ => 0x1b,
+            });
+        }
+        KeyCode::Up
+        | KeyCode::Down
+        | KeyCode::Right
+        | KeyCode::Left
+        | KeyCode::Home
+        | KeyCode::End => {
+            let suffix = match key.code {
+                KeyCode::Up => 'A',
+                KeyCode::Down => 'B',
+                KeyCode::Right => 'C',
+                KeyCode::Left => 'D',
+                KeyCode::Home => 'H',
+                _ => 'F',
+            };
+            let sequence = if parameter != 1 {
+                format!("\x1b[1;{parameter}{suffix}")
+            } else if application_cursor {
+                format!("\x1bO{suffix}")
+            } else {
+                format!("\x1b[{suffix}")
+            };
+            bytes.extend_from_slice(sequence.as_bytes());
+        }
+        KeyCode::Insert | KeyCode::Delete | KeyCode::PageUp | KeyCode::PageDown | KeyCode::F(_) => {
+            let number = match key.code {
+                KeyCode::Insert => 2,
+                KeyCode::Delete => 3,
+                KeyCode::PageUp => 5,
+                KeyCode::PageDown => 6,
+                KeyCode::F(n @ 1..=4) => {
+                    let suffix = (b'P' + n - 1) as char;
+                    return if parameter == 1 {
+                        format!("\x1bO{suffix}")
+                    } else {
+                        format!("\x1b[1;{parameter}{suffix}")
+                    }
+                    .into_bytes();
+                }
+                KeyCode::F(5) => 15,
+                KeyCode::F(6) => 17,
+                KeyCode::F(7) => 18,
+                KeyCode::F(8) => 19,
+                KeyCode::F(9) => 20,
+                KeyCode::F(10) => 21,
+                KeyCode::F(11) => 23,
+                KeyCode::F(12) => 24,
+                _ => return bytes,
+            };
+            let sequence = if parameter == 1 {
+                format!("\x1b[{number}~")
+            } else {
+                format!("\x1b[{number};{parameter}~")
+            };
+            bytes.extend_from_slice(sequence.as_bytes());
+        }
+        _ => (),
+    }
+    bytes
+}
+
+fn encode_mouse(mouse: &MouseEvent, area: Rect, screen: &vt100::Screen) -> Vec<u8> {
+    use vt100::{MouseProtocolEncoding, MouseProtocolMode};
+    if screen.mouse_protocol_mode() == MouseProtocolMode::None
+        || mouse.column < area.x
+        || mouse.column >= area.right()
+        || mouse.row < area.y
+        || mouse.row >= area.bottom()
+    {
+        return Vec::new();
+    }
+    let (mut button, released) = match mouse.kind {
+        MouseEventKind::Down(button)
+        | MouseEventKind::Up(button)
+        | MouseEventKind::Drag(button) => {
+            let code = match button {
+                MouseButton::Left => 0,
+                MouseButton::Middle => 1,
+                MouseButton::Right => 2,
+            };
+            (code, matches!(mouse.kind, MouseEventKind::Up(_)))
+        }
+        MouseEventKind::ScrollUp => (64, false),
+        MouseEventKind::ScrollDown => (65, false),
+        MouseEventKind::ScrollLeft => (66, false),
+        MouseEventKind::ScrollRight => (67, false),
+        _ => return Vec::new(),
+    };
+    if matches!(mouse.kind, MouseEventKind::Drag(_)) {
+        if !matches!(
+            screen.mouse_protocol_mode(),
+            MouseProtocolMode::ButtonMotion | MouseProtocolMode::AnyMotion
+        ) {
+            return Vec::new();
+        }
+        button += 32;
+    }
+    button += 4 * u16::from(mouse.modifiers.contains(KeyModifiers::SHIFT))
+        + 8 * u16::from(mouse.modifiers.contains(KeyModifiers::ALT))
+        + 16 * u16::from(mouse.modifiers.contains(KeyModifiers::CONTROL));
+    let x = mouse.column - area.x + 1;
+    let y = mouse.row - area.y + 1;
+    if screen.mouse_protocol_encoding() == MouseProtocolEncoding::Sgr {
+        format!("\x1b[<{button};{x};{y}{}", if released { 'm' } else { 'M' }).into_bytes()
+    } else if x <= 223 && y <= 223 {
+        vec![
+            0x1b,
+            b'[',
+            b'M',
+            if released { 35 } else { 32 + button as u8 },
+            32 + x as u8,
+            32 + y as u8,
+        ]
+    } else {
+        Vec::new()
+    }
+}

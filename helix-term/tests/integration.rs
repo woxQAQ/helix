@@ -21,4 +21,5 @@ mod test {
     mod file_explorer;
     mod movement;
     mod splits;
+    mod terminal;
 }

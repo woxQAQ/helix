@@ -90,7 +90,20 @@ pub fn for_each_changed_file(
     trust_full: bool,
     f: impl Fn(Result<FileChange>) -> bool,
 ) -> Result<()> {
-    status(&open_repo(cwd, trust_full)?.to_thread_local(), f)
+    status(&open_repo(cwd, trust_full)?.to_thread_local(), false, f)
+}
+
+pub fn file_statuses(cwd: &Path, trust_full: bool) -> Result<Vec<FileChange>> {
+    let mut changes = Vec::new();
+    status(
+        &open_repo(cwd, trust_full)?.to_thread_local(),
+        true,
+        |change| {
+            changes.push(change);
+            true
+        },
+    )?;
+    changes.into_iter().collect()
 }
 
 fn open_repo(path: &Path, trust_full: bool) -> Result<ThreadSafeRepository> {
@@ -145,7 +158,11 @@ fn open_repo(path: &Path, trust_full: bool) -> Result<ThreadSafeRepository> {
 }
 
 /// Emulates the result of running `git status` from the command line.
-fn status(repo: &Repository, f: impl Fn(Result<FileChange>) -> bool) -> Result<()> {
+fn status(
+    repo: &Repository,
+    include_staged: bool,
+    mut f: impl FnMut(Result<FileChange>) -> bool,
+) -> Result<()> {
     let work_dir = repo
         .workdir()
         .ok_or_else(|| anyhow::anyhow!("working tree not found"))?
@@ -169,16 +186,31 @@ fn status(repo: &Repository, f: impl Fn(Result<FileChange>) -> bool) -> Result<(
     // No filtering based on path
     let empty_patterns = vec![];
 
-    let status_iter = status_platform.into_index_worktree_iter(empty_patterns)?;
+    let status_iter: Box<dyn Iterator<Item = Result<gix::status::Item>>> = if include_staged {
+        Box::new(
+            status_platform
+                .into_iter(empty_patterns)?
+                .map(|item| item.map_err(Into::into)),
+        )
+    } else {
+        Box::new(
+            status_platform
+                .into_index_worktree_iter(empty_patterns)?
+                .map(|item| {
+                    item.map(gix::status::Item::IndexWorktree)
+                        .map_err(Into::into)
+                }),
+        )
+    };
 
     for item in status_iter {
-        let Ok(item) = item.map_err(|err| f(Err(err.into()))) else {
+        let Ok(item) = item.map_err(|err| f(Err(err))) else {
             continue;
         };
         let change = match item {
-            Item::Modification {
+            gix::status::Item::IndexWorktree(Item::Modification {
                 rela_path, status, ..
-            } => {
+            }) => {
                 let path = work_dir.join(rela_path.to_path()?);
                 match status {
                     EntryStatus::Conflict { .. } => FileChange::Conflict { path },
@@ -196,19 +228,36 @@ fn status(repo: &Repository, f: impl Fn(Result<FileChange>) -> bool) -> Result<(
                     _ => continue,
                 }
             }
-            Item::DirectoryContents { entry, .. } if entry.status == Status::Untracked => {
+            gix::status::Item::IndexWorktree(Item::DirectoryContents { entry, .. })
+                if entry.status == Status::Untracked =>
+            {
                 FileChange::Untracked {
                     path: work_dir.join(entry.rela_path.to_path()?),
                 }
             }
-            Item::Rewrite {
+            gix::status::Item::IndexWorktree(Item::Rewrite {
                 source,
                 dirwalk_entry,
                 ..
-            } => FileChange::Renamed {
+            }) => FileChange::Renamed {
                 from_path: work_dir.join(source.rela_path().to_path()?),
                 to_path: work_dir.join(dirwalk_entry.rela_path.to_path()?),
             },
+            gix::status::Item::TreeIndex(change) => {
+                use gix::diff::index::Change;
+                let path = work_dir.join(change.location().to_path()?);
+                match change {
+                    Change::Addition { .. } => FileChange::Added { path },
+                    Change::Deletion { .. } => FileChange::Deleted { path },
+                    Change::Modification { .. } => FileChange::Modified { path },
+                    Change::Rewrite {
+                        source_location, ..
+                    } => FileChange::Renamed {
+                        from_path: work_dir.join(source_location.to_path()?),
+                        to_path: path,
+                    },
+                }
+            }
             _ => continue,
         };
         if !f(Ok(change)) {

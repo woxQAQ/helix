@@ -16,6 +16,9 @@
 
 </div>
 
+> [!NOTE]
+> This fork has added a file explorer on the sidebar, like the behavior of nvim_tree/neotree of neovim.
+
 ![Screenshot](./screenshot.png)
 
 A [Kakoune](https://github.com/mawww/kakoune) / [Neovim](https://github.com/neovim/neovim) inspired editor, written in Rust.

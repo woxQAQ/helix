@@ -7,6 +7,7 @@ use crate::{
     keymap::{KeymapResult, Keymaps},
     ui::{
         document::{render_document, LinePos, TextRenderer},
+        file_explorer::{FileExplorer, Outcome},
         statusline,
         text_decorations::{self, Decoration, DecorationManager, InlineDiagnostics},
         Completion, ProgressSpinners,
@@ -44,6 +45,7 @@ pub struct EditorView {
     spinners: ProgressSpinners,
     /// Tracks if the terminal window is focused by reaction to terminal focus events
     terminal_focused: bool,
+    file_explorer: Option<FileExplorer>,
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +69,26 @@ impl EditorView {
             completion: None,
             spinners: ProgressSpinners::default(),
             terminal_focused: true,
+            file_explorer: None,
+        }
+    }
+
+    pub fn toggle_file_explorer(&mut self, editor: &mut Editor) {
+        if self.file_explorer.is_some() {
+            self.file_explorer = None;
+        } else {
+            self.focus_file_explorer(editor);
+        }
+    }
+
+    pub fn focus_file_explorer(&mut self, editor: &mut Editor) {
+        if let Some(explorer) = &mut self.file_explorer {
+            explorer.focused = true;
+            return;
+        }
+        match FileExplorer::new(helix_loader::find_workspace().0, editor) {
+            Ok(explorer) => self.file_explorer = Some(explorer),
+            Err(err) => editor.set_error(format!("File explorer: {err}")),
         }
     }
 
@@ -84,6 +106,9 @@ impl EditorView {
         is_focused: bool,
     ) {
         let inner = view.inner_area(doc);
+        if inner.width == 0 || inner.height == 0 {
+            return;
+        }
         let area = view.area;
         let theme = &editor.theme;
         let config = editor.config();
@@ -1460,6 +1485,41 @@ impl Component for EditorView {
             on_next_key_callback: None,
             jobs: context.jobs,
         };
+        if let Some(explorer) = &mut self.file_explorer {
+            let outcome = if let Event::Key(key) = event {
+                let mut key = *key;
+                canonicalize_key(&mut key);
+                explorer.handle_event(&Event::Key(key), cx.editor)
+            } else {
+                explorer.handle_event(event, cx.editor)
+            };
+            if let Outcome::OpenExternal(path) = &outcome {
+                cx.jobs.callback(crate::open_external_file_callback(path));
+            }
+            match outcome {
+                Outcome::Ignored => {}
+                Outcome::Consumed | Outcome::Close | Outcome::OpenExternal(_) => {
+                    if matches!(outcome, Outcome::Close) {
+                        self.file_explorer = None;
+                    }
+                    if matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::Down(_)))
+                    {
+                        self.handle_non_key_input(&mut cx);
+                        self.clear_completion(cx.editor);
+                    }
+                    let callbacks = cx.callback;
+                    return EventResult::Consumed(if callbacks.is_empty() {
+                        None
+                    } else {
+                        Some(Box::new(move |compositor, context| {
+                            for callback in callbacks {
+                                callback(compositor, context);
+                            }
+                        }))
+                    });
+                }
+            }
+        }
 
         match event {
             Event::Paste(contents) => {
@@ -1619,6 +1679,17 @@ impl Component for EditorView {
         // clear with background color
         surface.set_style(area, cx.editor.theme.get("ui.background"));
         let config = cx.editor.config();
+        let document_area = if let Some(explorer) = &mut self.file_explorer {
+            let document_area = explorer.layout(area, config.file_explorer.sidebar_width);
+            explorer.render(surface, cx.editor);
+            document_area
+        } else {
+            area
+        };
+        let explorer_focused = self
+            .file_explorer
+            .as_ref()
+            .is_some_and(|explorer| explorer.focused);
 
         // check if bufferline should be rendered
         use helix_view::editor::BufferLine;
@@ -1629,7 +1700,7 @@ impl Component for EditorView {
         };
 
         // -1 for commandline and -1 for bufferline
-        let mut editor_area = area.clip_bottom(1);
+        let mut editor_area = document_area.clip_bottom(1);
         if use_bufferline {
             editor_area = editor_area.clip_top(1);
         }
@@ -1638,12 +1709,19 @@ impl Component for EditorView {
         cx.editor.resize(editor_area);
 
         if use_bufferline {
-            Self::render_bufferline(cx.editor, area.with_height(1), surface);
+            Self::render_bufferline(cx.editor, document_area.with_height(1), surface);
         }
 
         for (view, is_focused) in cx.editor.tree.views() {
             let doc = cx.editor.document(view.doc).unwrap();
-            self.render_view(cx.editor, doc, view, area, surface, is_focused);
+            self.render_view(
+                cx.editor,
+                doc,
+                view,
+                document_area,
+                surface,
+                is_focused && !explorer_focused,
+            );
         }
 
         if config.auto_info {
@@ -1735,6 +1813,13 @@ impl Component for EditorView {
     }
 
     fn cursor(&self, _area: Rect, editor: &Editor) -> (Option<Position>, CursorKind) {
+        if self
+            .file_explorer
+            .as_ref()
+            .is_some_and(|explorer| explorer.focused)
+        {
+            return (None, CursorKind::Hidden);
+        }
         match editor.cursor() {
             // all block cursors are drawn manually
             (pos, CursorKind::Block) => {

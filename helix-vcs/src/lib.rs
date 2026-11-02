@@ -61,6 +61,28 @@ impl DiffProviderRegistry {
         })
     }
 
+    /// Collect staged and working-tree changes off the UI thread.
+    /// Returns `None` when no provider can read the repository.
+    pub async fn file_statuses(self, cwd: PathBuf, trust_full: bool) -> Option<Vec<FileChange>> {
+        tokio::task::spawn_blocking(move || {
+            self.providers.iter().find_map(|provider| {
+                match provider.file_statuses(&cwd, trust_full) {
+                    Ok(changes) => Some(changes),
+                    Err(err) => {
+                        log::debug!(
+                            "failed to obtain file status for {}: {err:#}",
+                            cwd.display()
+                        );
+                        None
+                    }
+                }
+            })
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
     /// Fire-and-forget changed file iteration. Runs everything in a background task. Keeps
     /// iteration until `on_change` returns `false`.
     pub fn for_each_changed_file(
@@ -123,6 +145,14 @@ impl DiffProvider {
         match self {
             #[cfg(feature = "git")]
             Self::Git => git::get_current_head_name(file, trust_full),
+            Self::None => bail!("No diff support compiled in"),
+        }
+    }
+
+    fn file_statuses(&self, cwd: &Path, trust_full: bool) -> Result<Vec<FileChange>> {
+        match self {
+            #[cfg(feature = "git")]
+            Self::Git => git::file_statuses(cwd, trust_full),
             Self::None => bail!("No diff support compiled in"),
         }
     }

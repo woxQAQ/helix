@@ -297,6 +297,8 @@ impl<'a> TextRenderer<'a> {
                 &self.virtual_tab[..grapheme_tab_width]
             }
             Grapheme::Other { ref g } if g == "\u{00A0}" => " ",
+            // Control bytes are editable text, never terminal commands.
+            Grapheme::Other { ref g } if g.chars().next().is_some_and(char::is_control) => "�",
             Grapheme::Other { ref g } => g,
             Grapheme::Newline => " ",
         };
@@ -354,6 +356,8 @@ impl<'a> TextRenderer<'a> {
             Grapheme::Other { ref g } if g == " " && !grapheme.source.is_eof() => space,
             Grapheme::Other { ref g } if g == "\u{00A0}" => nbsp,
             Grapheme::Other { ref g } if g == "\u{202F}" => nnbsp,
+            // The fast cell writer preserves bytes, so escape controls before rendering.
+            Grapheme::Other { ref g } if g.chars().next().is_some_and(char::is_control) => "�",
             Grapheme::Other { ref g } => g,
             Grapheme::Newline => &self.newline,
         };

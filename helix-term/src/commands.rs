@@ -77,7 +77,6 @@ use std::{
     error::Error,
     fmt,
     future::Future,
-    io::Read,
     num::NonZeroUsize,
 };
 
@@ -403,6 +402,8 @@ impl MappableCommand {
         file_picker, "Open file picker",
         file_picker_in_current_buffer_directory, "Open file picker at current buffer's directory",
         file_picker_in_current_directory, "Open file picker at current working directory",
+        toggle_file_explorer, "Toggle file explorer sidebar",
+        focus_file_explorer, "Focus file explorer sidebar",
         file_explorer, "Open file explorer in workspace root",
         file_explorer_in_current_buffer_directory, "Open file explorer at current buffer's directory",
         file_explorer_in_current_directory, "Open file explorer at current working directory",
@@ -1575,14 +1576,7 @@ fn should_open_url_externally(url: &Url) -> bool {
         return true;
     }
 
-    let is_binary = std::fs::File::open(url.path()).and_then(|file| {
-        // Read up to 1kb to detect the content type
-        let mut read_buffer = Vec::new();
-        let n = file.take(1024).read_to_end(&mut read_buffer)?;
-        Ok(crate::is_binary(&read_buffer[..n]))
-    });
-
-    matches!(is_binary, Ok(true))
+    matches!(crate::file_is_binary(Path::new(url.path())), Ok(true))
 }
 
 fn extend_word_impl<F>(cx: &mut Context, extend_fn: F)
@@ -3214,6 +3208,22 @@ fn file_picker_in_current_directory(cx: &mut Context) {
     cx.push_layer(Box::new(overlaid(picker)));
 }
 
+fn toggle_file_explorer(cx: &mut Context) {
+    cx.callback.push(Box::new(|compositor, context| {
+        if let Some(view) = compositor.find::<ui::EditorView>() {
+            view.toggle_file_explorer(context.editor);
+        }
+    }));
+}
+
+fn focus_file_explorer(cx: &mut Context) {
+    cx.callback.push(Box::new(|compositor, context| {
+        if let Some(view) = compositor.find::<ui::EditorView>() {
+            view.focus_file_explorer(context.editor);
+        }
+    }));
+}
+
 fn file_explorer(cx: &mut Context) {
     let root = find_workspace().0;
     if !root.exists() {
@@ -3506,6 +3516,7 @@ fn changed_file_picker(cx: &mut Context) {
         PickerColumn::new("change", |change: &FileChange, data: &FileChangeData| {
             match change {
                 FileChange::Untracked { .. } => Span::styled("+ untracked", data.style_untracked),
+                FileChange::Added { .. } => Span::styled("+ added", data.style_untracked),
                 FileChange::Modified { .. } => Span::styled("~ modified", data.style_modified),
                 FileChange::Conflict { .. } => Span::styled("x conflict", data.style_conflict),
                 FileChange::Deleted { .. } => Span::styled("- deleted", data.style_deleted),
@@ -3521,7 +3532,7 @@ fn changed_file_picker(cx: &mut Context) {
                     .to_string()
             };
             match change {
-                FileChange::Untracked { path } => display_path(path),
+                FileChange::Untracked { path } | FileChange::Added { path } => display_path(path),
                 FileChange::Modified { path } => display_path(path),
                 FileChange::Conflict { path } => display_path(path),
                 FileChange::Deleted { path } => display_path(path),

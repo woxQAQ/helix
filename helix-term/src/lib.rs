@@ -16,8 +16,9 @@ pub mod ui;
 #[cfg(not(windows))]
 use std::env::var_os;
 
+use std::io::{self, Read};
 use std::path::Path;
-use std::process::Stdio;
+use std::process::{Command, Stdio};
 
 use futures_util::Future;
 mod handlers;
@@ -74,6 +75,15 @@ pub(crate) fn is_binary(buffer: &[u8]) -> bool {
     scan.contains(&0) || buffer.starts_with(b"%PDF") || buffer.starts_with(b"\x89PNG")
 }
 
+/// Inspect a leading chunk without loading the entire file into a document.
+pub(crate) fn file_is_binary(path: &Path) -> io::Result<bool> {
+    let mut buffer = Vec::with_capacity(1024);
+    std::fs::File::open(path)?
+        .take(1024)
+        .read_to_end(&mut buffer)?;
+    Ok(is_binary(&buffer))
+}
+
 /// Function used for filtering dir entries in the various file pickers.
 fn filter_picker_entry(entry: &DirEntry, root: &Path, dedup_symlinks: bool) -> bool {
     // We always want to ignore popular VCS directories, otherwise if
@@ -103,15 +113,33 @@ fn filter_picker_entry(entry: &DirEntry, root: &Path, dedup_symlinks: bool) -> b
 fn open_external_url_callback(
     url: Url,
 ) -> impl Future<Output = Result<job::Callback, anyhow::Error>> + Send + 'static {
-    let commands = open::commands(url.as_str());
-    async {
+    external_open_callback(
+        open::commands(url.as_str()),
+        "Opening URL in external program failed",
+    )
+}
+
+fn open_external_file_callback(
+    path: &Path,
+) -> impl Future<Output = Result<job::Callback, anyhow::Error>> + Send + 'static {
+    external_open_callback(
+        open::commands(path),
+        "Opening file in external program failed",
+    )
+}
+
+fn external_open_callback(
+    commands: Vec<Command>,
+    failure_message: &'static str,
+) -> impl Future<Output = Result<job::Callback, anyhow::Error>> + Send + 'static {
+    async move {
         for cmd in commands {
             let mut command: tokio::process::Command = cmd.into();
             command.stdin(Stdio::null());
             let output = match command.output().await {
                 Ok(output) => output,
                 Err(err) => {
-                    log::debug!("Failed to launch external URL opener: {err}");
+                    log::debug!("Failed to launch external opener: {err}");
                     continue;
                 }
             };
@@ -121,14 +149,14 @@ fn open_external_url_callback(
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
             log::warn!(
-                "External URL opener exited with status {}. stdout: {:?}, stderr: {:?}",
+                "External opener exited with status {}. stdout: {:?}, stderr: {:?}",
                 output.status,
                 stdout.trim(),
                 stderr.trim()
             );
         }
         Ok(job::Callback::Editor(Box::new(move |editor| {
-            editor.set_error("Opening URL in external program failed")
+            editor.set_error(failure_message)
         })))
     }
 }

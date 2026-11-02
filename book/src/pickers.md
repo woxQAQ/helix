@@ -12,4 +12,38 @@ You can insert the contents of a [register](./registers.md) using `Ctrl-r` follo
 
 ### File explorer
 
-`Space-e` opens an interactive file explorer for browsing and opening files, rooted at the workspace; `Space-.` opens one rooted at the current buffer's directory. Unlike the file picker, the explorer does not ignore most files by default; its ignore behaviour is configured separately in the [`[editor.file-explorer]`](./editor.md#editorfile-explorer-section) section.
+`Space-e` toggles a persistent file explorer sidebar rooted at the workspace. `Space-E` focuses the sidebar, opening it if necessary. Opening a file keeps the sidebar visible and returns focus to the document. The current file is revealed when the sidebar first opens.
+
+The sidebar shares the ignore and directory-flattening options in [`[editor.file-explorer]`](./editor.md#editorfile-explorer-section). Set `sidebar-width` there to change its width (30 columns by default, including the separator). It temporarily hides when the terminal is too small to leave room for both the tree and the document.
+
+The sidebar displays Nerd Font icons by default. Configure the terminal to use a Nerd Font (preferably a Mono variant). File icons follow Helix's language detection, with specific icons for common project files, images, archives, and other media. Expanded and collapsed directories use different folder icons. To disable the icons:
+
+```toml
+[editor.file-explorer]
+icons = false
+```
+
+Git changes color file names and icons. Modified files and `M` markers default to the theme's `warning` foreground (typically yellow); themes can override this with `"ui.file-explorer.git.modified"`. Other states use the theme's `diff` foregrounds. Directory names, folder icons, and the root heading retain their normal colors, with descendant changes summarized in the status badge. Selection backgrounds remain visible. The status column shows `M` for modified, `A` for staged additions, `?` for untracked, `D` for deleted, `R` for renamed, and `!` for conflicts. Both staged and working-tree changes are included, including deleted files that no longer appear in the tree. Clean and Git-ignored files keep their normal colors and have no badge.
+
+Directory badges retain every distinct descendant state, so a folder containing modified, staged-new, and untracked files shows `MA?`. The root heading aggregates the entire tree. Badges are deduplicated and ordered consistently as `!MRDA?`, with each marker keeping its own color. Each row reserves enough space for its badges; very narrow rows omit the file icon when needed to keep names visible.
+
+Git status is loaded in the background when the sidebar opens and when `r` refreshes it. A refresh preserves expanded directories and selection. Outside a Git repository the sidebar works without Git badges.
+
+| Key | Action |
+| --- | --- |
+| `j` / `k`, arrows | Move down / up |
+| `l` / Right | Expand a directory, enter an expanded directory, or open a file |
+| `h` / Left | Collapse a directory or select its parent |
+| `Enter` | Toggle a directory or open a file |
+| `Ctrl-v` / `Ctrl-s` | Open a file in a vertical / horizontal split |
+| `g` / `G`, Home / End | Select the first / last entry |
+| PageUp / PageDown, `Ctrl-u` / `Ctrl-d` | Move by a page |
+| `r` | Refresh the tree and Git status, preserving expanded directories |
+| `Esc` / Tab | Return focus to the document |
+| `q` | Close the sidebar |
+
+Opening a file inspects its content first. Binary files such as PNG images and PDFs open in the system's default application, leaving the document and split layout unchanged. Text files open in Helix, including UTF-16/32 files with a byte-order mark. This applies to mouse clicks, `Enter`, `l`, and split shortcuts.
+
+Click an entry to toggle its directory or open its file. The mouse wheel moves the selection. Clicking the document returns focus to it. Command prompts (`:`), space-mode bindings, and window commands (`Ctrl-w`) remain accessible from the sidebar.
+
+`Space-.` opens the directory picker at the current buffer's directory. The `file_explorer` command also remains available for a workspace-rooted picker and can be assigned a custom binding.

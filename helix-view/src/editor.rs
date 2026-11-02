@@ -249,6 +249,10 @@ pub struct FileExplorerConfig {
     pub git_exclude: bool,
     /// Whether to flatten single-child directories in file explorer. Defaults to true.
     pub flatten_dirs: bool,
+    /// Width of the file explorer sidebar, including its separator. Defaults to 30.
+    pub sidebar_width: u16,
+    /// Show Nerd Font file and directory icons in the sidebar. Defaults to true.
+    pub icons: bool,
 }
 
 impl Default for FileExplorerConfig {
@@ -262,6 +266,8 @@ impl Default for FileExplorerConfig {
             git_global: false,
             git_exclude: false,
             flatten_dirs: true,
+            sidebar_width: 30,
+            icons: true,
         }
     }
 }

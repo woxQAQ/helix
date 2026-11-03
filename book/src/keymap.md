@@ -335,7 +335,9 @@ must be available on `PATH`.
 Keyboard input, mouse input, and pasted text are forwarded to lazygit. Use its
 normal quit action to return to the editor, or press `Ctrl-g` to close the
 floating terminal and terminate the process. `Esc` is forwarded to lazygit.
-The floating terminal follows editor window size changes.
+The floating terminal follows editor window size changes, and reports the editor
+background to lazygit so that its own light or dark theme follows the editor
+theme.
 
 To use another key, bind the `lazygit` command in your configuration:
 

@@ -546,18 +546,9 @@ impl FileExplorer {
                 theme.get("ui.background")
             };
             surface.set_style(Rect::new(area.x, y, area.width - 1, 1), base);
-            let marker = if entry.is_dir {
-                if entry.expanded {
-                    "▾"
-                } else {
-                    "▸"
-                }
-            } else {
-                " "
-            };
             let status = git_status.get(&entry.path).copied().unwrap_or_default();
             let label_width = status.label_width(width);
-            let show_icon = icons && label_width >= 5;
+            let show_icon = icons && label_width >= 4;
             let icon = if show_icon {
                 if entry.is_dir && entry.expanded {
                     file_icons::FOLDER_OPEN
@@ -568,13 +559,9 @@ impl FileExplorer {
                 ""
             };
             let icon_spacing = if show_icon { " " } else { "" };
-            let prefix_width = if show_icon { 4 } else { 2 };
+            let prefix_width = if show_icon { 2 } else { 0 };
             let indent = (entry.depth * 2).min(label_width.saturating_sub(prefix_width + 1));
-            let label = format!(
-                "{}{marker} {icon}{icon_spacing}{}",
-                " ".repeat(indent),
-                entry.name
-            );
+            let label = format!("{}{icon}{icon_spacing}{}", " ".repeat(indent), entry.name);
             let foreground = status
                 .iter()
                 .next()

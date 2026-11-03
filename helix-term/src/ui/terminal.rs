@@ -29,10 +29,188 @@ pub fn open_lazygit(editor: &mut Editor, compositor: &mut crate::compositor::Com
     if compositor.find::<FloatingTerminal>().is_some() {
         return;
     }
-    match FloatingTerminal::lazygit(&helix_loader::find_workspace().0, compositor.size()) {
+    // The float paints on the editor background, so that is the terminal background
+    // the child gets told about.
+    let background = editor.theme.get("ui.background").bg;
+    match FloatingTerminal::lazygit(
+        &helix_loader::find_workspace().0,
+        compositor.size(),
+        background,
+    ) {
         Ok(terminal) => compositor.push(Box::new(terminal)),
         Err(err) => editor.set_error(format!("{err:#}")),
     }
+}
+
+/// Longer than any query prefix we hold back for the rest of its bytes.
+const MAX_QUERY: usize = 9;
+
+/// Queries whose replies we generate: primary device attributes, the text area
+/// size report and the color scheme report. The background color query is an OSC
+/// sequence and is matched separately.
+const QUERIES: [&[u8]; 3] = [b"\x1b[c", b"\x1b[18t", b"\x1b[?996n"];
+
+/// Asks for the background color. Terminals are meant to answer with an OSC 11
+/// report ending in BEL or ST.
+const BACKGROUND_QUERY: &[u8] = b"\x1b]11;?";
+
+/// Answers the terminal queries a full-screen child sends while it negotiates
+/// its capabilities, size and colors.
+///
+/// tcell-based programs such as lazygit ask for the device attributes and wait up
+/// to a second for the reply before drawing anything, so a terminal that stays
+/// silent costs a second on every startup. We answer the subset that libvterm,
+/// and therefore Neovim's `:terminal`, answers as well, plus the background color
+/// so children can pick a light or dark theme of their own.
+struct QueryReplies {
+    /// The start of a query that continues in the next read.
+    pending: Vec<u8>,
+    /// The background color of the surface the terminal is drawn on.
+    background: Option<(u8, u8, u8)>,
+}
+
+impl QueryReplies {
+    fn new(background: Option<Color>) -> Self {
+        Self {
+            pending: Vec::new(),
+            background: background.and_then(rgb),
+        }
+    }
+
+    /// Scans a chunk of child output and returns the bytes to write back.
+    fn feed(&mut self, chunk: &[u8], (rows, cols): (u16, u16)) -> Vec<u8> {
+        let mut data = std::mem::take(&mut self.pending);
+        data.extend_from_slice(chunk);
+        let mut replies = Vec::new();
+        let mut index = 0;
+        while index < data.len() {
+            let rest = &data[index..];
+            if rest.starts_with(QUERIES[0]) {
+                replies.extend_from_slice(b"\x1b[?1;2c");
+                index += QUERIES[0].len();
+            } else if rest.starts_with(QUERIES[1]) {
+                replies.extend_from_slice(format!("\x1b[8;{rows};{cols}t").as_bytes());
+                index += QUERIES[1].len();
+            } else if rest.starts_with(QUERIES[2]) {
+                // 1 is a dark and 2 a light background. lazygit derives both from the
+                // background color it is told, so keep the two answers consistent.
+                if let Some(background) = self.background {
+                    let scheme = if is_light(background) { 2 } else { 1 };
+                    replies.extend_from_slice(format!("\x1b[?997;{scheme}n").as_bytes());
+                }
+                index += QUERIES[2].len();
+            } else if let Some(query) = rest.strip_prefix(BACKGROUND_QUERY) {
+                // Wait for the terminator: a child may send it in a later write.
+                let terminator = if query.starts_with(b"\x07") {
+                    1
+                } else if query.starts_with(b"\x1b\\") {
+                    2
+                } else if query.len() < 2 {
+                    break;
+                } else {
+                    index += 1;
+                    continue;
+                };
+                if let Some((r, g, b)) = self.background {
+                    replies.extend_from_slice(
+                        format!("\x1b]11;rgb:{r:02x}{r:02x}/{g:02x}{g:02x}/{b:02x}{b:02x}\x07")
+                            .as_bytes(),
+                    );
+                }
+                index += BACKGROUND_QUERY.len() + terminator;
+            } else if is_query_prefix(rest) {
+                break;
+            } else {
+                index += 1;
+            }
+        }
+        self.pending.extend_from_slice(&data[index..]);
+        replies
+    }
+}
+
+/// Whether `bytes` may be the beginning of a query whose remaining bytes have not
+/// arrived yet.
+fn is_query_prefix(bytes: &[u8]) -> bool {
+    bytes.len() < MAX_QUERY
+        && QUERIES
+            .iter()
+            .copied()
+            .chain([BACKGROUND_QUERY])
+            .any(|query| query.starts_with(bytes))
+}
+
+/// The sRGB value of a color, or `None` for the terminal's own default.
+fn rgb(color: Color) -> Option<(u8, u8, u8)> {
+    // The xterm defaults of the sixteen ANSI colors, then the 6x6x6 cube and the
+    // grayscale ramp that make up the remaining indexed colors.
+    const ANSI: [(u8, u8, u8); 16] = [
+        (0x00, 0x00, 0x00),
+        (0xcd, 0x00, 0x00),
+        (0x00, 0xcd, 0x00),
+        (0xcd, 0xcd, 0x00),
+        (0x00, 0x00, 0xee),
+        (0xcd, 0x00, 0xcd),
+        (0x00, 0xcd, 0xcd),
+        (0xe5, 0xe5, 0xe5),
+        (0x7f, 0x7f, 0x7f),
+        (0xff, 0x00, 0x00),
+        (0x00, 0xff, 0x00),
+        (0xff, 0xff, 0x00),
+        (0x5c, 0x5c, 0xff),
+        (0xff, 0x00, 0xff),
+        (0x00, 0xff, 0xff),
+        (0xff, 0xff, 0xff),
+    ];
+    Some(match color {
+        Color::Reset => return None,
+        Color::Black => ANSI[0],
+        Color::Red => ANSI[1],
+        Color::Green => ANSI[2],
+        Color::Yellow => ANSI[3],
+        Color::Blue => ANSI[4],
+        Color::Magenta => ANSI[5],
+        Color::Cyan => ANSI[6],
+        Color::Gray => ANSI[7],
+        Color::LightRed => ANSI[8],
+        Color::LightGreen => ANSI[9],
+        Color::LightYellow => ANSI[10],
+        Color::LightBlue => ANSI[11],
+        Color::LightMagenta => ANSI[12],
+        Color::LightCyan => ANSI[13],
+        Color::LightGray => ANSI[14],
+        Color::White => ANSI[15],
+        Color::Rgb(r, g, b) => (r, g, b),
+        Color::Indexed(index) => match index {
+            0..=15 => ANSI[index as usize],
+            16..=231 => {
+                let level = |step: u8| if step == 0 { 0 } else { 55 + 40 * step };
+                let index = index - 16;
+                (level(index / 36), level(index % 36 / 6), level(index % 6))
+            }
+            _ => {
+                let shade = 8 + 10 * (index - 232);
+                (shade, shade, shade)
+            }
+        },
+    })
+}
+
+/// Whether a background color reads as light.
+///
+/// lazygit classifies the background itself from CIE Lab lightness, which crosses
+/// 0.5 at a relative luminance of ~0.184, so the same threshold keeps our two
+/// answers in agreement.
+fn is_light((r, g, b): (u8, u8, u8)) -> bool {
+    let linear = |channel: u8| {
+        let channel = f32::from(channel) / 255.0;
+        if channel <= 0.04045 {
+            channel / 12.92
+        } else {
+            ((channel + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b) > 0.1838
 }
 
 pub struct FloatingTerminal {
@@ -44,7 +222,13 @@ pub struct FloatingTerminal {
 }
 
 impl FloatingTerminal {
-    pub fn new(mut command: CommandBuilder, area: Rect) -> anyhow::Result<Self> {
+    /// `background` is the color of the surface the terminal is drawn on, which is
+    /// reported to the child as its terminal background.
+    pub fn new(
+        mut command: CommandBuilder,
+        area: Rect,
+        background: Option<Color>,
+    ) -> anyhow::Result<Self> {
         let area = Self::inner_area(area);
         anyhow::ensure!(
             area.width > 0 && area.height > 0,
@@ -96,9 +280,19 @@ impl FloatingTerminal {
             child.wait()
         });
         let screen = parser.clone();
+        let replies = input.clone();
         tokio::spawn(async move {
+            let mut queries = QueryReplies::new(background);
             while let Some(bytes) = output_rx.recv().await {
-                screen.lock().process(&bytes);
+                let size = {
+                    let mut screen = screen.lock();
+                    screen.process(&bytes);
+                    screen.screen().size()
+                };
+                let answer = queries.feed(&bytes, size);
+                if !answer.is_empty() {
+                    replies.send(answer).ok();
+                }
                 helix_event::request_redraw();
             }
             let result = output.await;
@@ -132,10 +326,14 @@ impl FloatingTerminal {
         })
     }
 
-    pub fn lazygit(directory: &Path, area: Rect) -> anyhow::Result<Self> {
+    pub fn lazygit(
+        directory: &Path,
+        area: Rect,
+        background: Option<Color>,
+    ) -> anyhow::Result<Self> {
         let mut command = CommandBuilder::new("lazygit");
         command.cwd(directory);
-        Self::new(command, area)
+        Self::new(command, area, background)
     }
 
     fn outer_area(area: Rect) -> Rect {
@@ -245,42 +443,39 @@ impl Component for FloatingTerminal {
             .border_style(cx.editor.theme.get("ui.text.inactive"))
             .render(outer, surface);
         let parser = self.parser.lock();
+        let screen = parser.screen();
+        let mut text = String::new();
         for row in 0..inner.height {
-            for col in 0..inner.width {
-                let Some(cell) = parser.screen().cell(row, col) else {
-                    continue;
+            let y = inner.y + row;
+            let mut col = 0;
+            while col < inner.width {
+                let Some(cell) = screen.cell(row, col) else {
+                    break;
                 };
                 if cell.is_wide_continuation() {
+                    col += 1;
                     continue;
                 }
-                let mut style = Style::default()
-                    .fg(color(cell.fgcolor()))
-                    .bg(color(cell.bgcolor()));
-                for (enabled, modifier) in [
-                    (cell.bold(), Modifier::BOLD),
-                    (cell.dim(), Modifier::DIM),
-                    (cell.italic(), Modifier::ITALIC),
-                    (cell.inverse(), Modifier::REVERSED),
-                ] {
-                    if enabled {
-                        style = style.add_modifier(modifier);
+                // Full-screen children such as lazygit repaint constantly, so a row is
+                // drawn as runs of equally styled cells instead of one cell at a time.
+                let style = cell_style(cell);
+                text.clear();
+                text.push_str(cell_text(cell));
+                let mut end = col + 1;
+                while end < inner.width {
+                    let Some(cell) = screen.cell(row, end) else {
+                        break;
+                    };
+                    if !cell.is_wide_continuation() {
+                        if cell_style(cell) != style {
+                            break;
+                        }
+                        text.push_str(cell_text(cell));
                     }
+                    end += 1;
                 }
-                if cell.underline() {
-                    style = style.underline_style(UnderlineStyle::Line);
-                }
-                let text = if cell.has_contents() {
-                    cell.contents()
-                } else {
-                    " "
-                };
-                surface.set_stringn(
-                    inner.x + col,
-                    inner.y + row,
-                    text,
-                    (inner.width - col) as usize,
-                    style,
-                );
+                surface.set_stringn(inner.x + col, y, &text, (inner.width - col) as usize, style);
+                col = end;
             }
         }
     }
@@ -307,6 +502,36 @@ fn color(color: vt100::Color) -> Color {
         vt100::Color::Default => Color::Reset,
         vt100::Color::Idx(index) => Color::Indexed(index),
         vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+    }
+}
+
+/// The style a cell is drawn with.
+fn cell_style(cell: &vt100::Cell) -> Style {
+    let mut style = Style::default()
+        .fg(color(cell.fgcolor()))
+        .bg(color(cell.bgcolor()));
+    for (enabled, modifier) in [
+        (cell.bold(), Modifier::BOLD),
+        (cell.dim(), Modifier::DIM),
+        (cell.italic(), Modifier::ITALIC),
+        (cell.inverse(), Modifier::REVERSED),
+    ] {
+        if enabled {
+            style = style.add_modifier(modifier);
+        }
+    }
+    if cell.underline() {
+        style = style.underline_style(UnderlineStyle::Line);
+    }
+    style
+}
+
+/// The glyph a cell is drawn with; empty cells are blank.
+fn cell_text(cell: &vt100::Cell) -> &str {
+    if cell.has_contents() {
+        cell.contents()
+    } else {
+        " "
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::{
     align_view,
-    annotations::diagnostics::InlineDiagnostics,
+    annotations::{diagnostics::InlineDiagnostics, git::InlineHunk},
     document::{DocumentColorSwatches, DocumentInlayHints},
     editor::{GutterConfig, GutterType},
     graphics::Rect,
@@ -172,6 +172,7 @@ pub struct View {
     // left to future work. For now we treat all views as focused and give them
     // each their own handler.
     pub diagnostics_handler: DiagnosticsHandler,
+    pub inline_hunk: Option<InlineHunk>,
 }
 
 impl fmt::Debug for View {
@@ -197,6 +198,7 @@ impl View {
             gutters,
             doc_revisions: HashMap::new(),
             diagnostics_handler: DiagnosticsHandler::new(),
+            inline_hunk: None,
         }
     }
 
@@ -454,6 +456,11 @@ impl View {
         Some(pos)
     }
 
+    /// Return the preview only while its buffer snapshot and diff base still match.
+    pub fn inline_hunk(&self, doc: &Document) -> Option<&InlineHunk> {
+        self.inline_hunk.as_ref().filter(|hunk| hunk.is_valid(doc))
+    }
+
     /// Get the text annotations to display in the current view for the given document and theme.
     pub fn text_annotations<'a>(
         &self,
@@ -461,6 +468,9 @@ impl View {
         theme: Option<&Theme>,
     ) -> TextAnnotations<'a> {
         let mut text_annotations = TextAnnotations::default();
+        if let Some(hunk) = self.inline_hunk(doc) {
+            text_annotations.add_line_annotation(hunk.line_annotation());
+        }
 
         if let Some(labels) = doc.jump_labels.get(&self.id) {
             let style = theme.and_then(|t| t.find_highlight("ui.virtual.jump-label"));

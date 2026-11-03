@@ -402,6 +402,8 @@ impl MappableCommand {
         file_picker, "Open file picker",
         file_picker_in_current_buffer_directory, "Open file picker at current buffer's directory",
         file_picker_in_current_directory, "Open file picker at current working directory",
+        toggle_inline_blame, "Toggle inline Git blame for the current line",
+        show_diff_hunk, "Toggle inline diff hunk at the cursor",
         lazygit, "Open lazygit in a floating terminal",
         toggle_file_explorer, "Toggle file explorer sidebar",
         focus_file_explorer, "Focus file explorer sidebar",
@@ -3209,6 +3211,18 @@ fn file_picker_in_current_directory(cx: &mut Context) {
     cx.push_layer(Box::new(overlaid(picker)));
 }
 
+fn toggle_inline_blame(cx: &mut Context) {
+    cx.callback.push(Box::new(|compositor, context| {
+        if let Some(view) = compositor.find::<ui::EditorView>() {
+            view.toggle_inline_blame(context.editor, context.jobs);
+        }
+    }));
+}
+
+fn show_diff_hunk(cx: &mut Context) {
+    ui::git::show_hunk(cx);
+}
+
 fn lazygit(cx: &mut Context) {
     cx.callback.push(Box::new(|compositor, context| {
         ui::terminal::open_lazygit(context.editor, compositor);
@@ -4294,16 +4308,20 @@ fn goto_next_change_impl(cx: &mut Context, direction: Direction) {
             let cursor_line = range.cursor_line(doc_text) as u32;
 
             let diff = diff_handle.load();
-            let hunk_idx = match direction {
-                Direction::Forward => diff
-                    .next_hunk(cursor_line)
-                    .map(|idx| (idx + count).min(diff.len() - 1)),
-                Direction::Backward => diff
-                    .prev_hunk(cursor_line)
-                    .map(|idx| idx.saturating_sub(count)),
-            };
-            let Some(hunk_idx) = hunk_idx else {
+            if diff.is_empty() {
                 return range;
+            }
+            let len = diff.len();
+            let count = count % len;
+            let hunk_idx = match direction {
+                Direction::Forward => {
+                    let next = diff.next_hunk(cursor_line).unwrap_or(0);
+                    (next + count) % len
+                }
+                Direction::Backward => {
+                    let prev = diff.prev_hunk(cursor_line).unwrap_or(len - 1);
+                    (prev + len - count) % len
+                }
             };
             let hunk = diff.nth_hunk(hunk_idx);
             let new_range = hunk_range(hunk, doc_text);

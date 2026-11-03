@@ -3,6 +3,7 @@ mod document;
 pub(crate) mod editor;
 mod file_explorer;
 mod file_icons;
+pub(crate) mod git;
 mod info;
 pub mod lsp;
 mod markdown;

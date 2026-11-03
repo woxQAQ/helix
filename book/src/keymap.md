@@ -301,6 +301,7 @@ This layer is a kludge of mappings, mostly pickers.
 | `b`     | Open buffer picker                                                      | `buffer_picker`                            |
 | `j`     | Open jumplist picker                                                    | `jumplist_picker`                          |
 | `g`     | Open changed file picker                                                | `changed_file_picker`                      |
+| `v`     | Open Git menu                                                           | N/A                                        |
 | `l`     | Open lazygit in a floating terminal                                      | `lazygit`                                  |
 | `G`     | Debug (experimental)                                                    | N/A                                        |
 | `k`     | Show documentation for item under cursor in a [popup](#popup) (**LSP**) | `hover`                                    |
@@ -325,6 +326,38 @@ This layer is a kludge of mappings, mostly pickers.
 | `?`     | Open command palette                                                    | `command_palette`                          |
 
 > 💡 Global search displays results in a fuzzy picker, use `Space + '` to bring it back up after opening a file.
+
+##### Git
+
+Press `Space v` to open the Git menu:
+
+| Key | Description | Command |
+| --- | --- | --- |
+| `b` | Toggle current-line inline blame | `toggle_inline_blame` |
+| `h` | Toggle inline hunk preview at the cursor | `show_diff_hunk` |
+| `j` | Jump to the next hunk | `goto_next_change` |
+| `k` | Jump to the previous hunk | `goto_prev_change` |
+| `g` | Open changed file picker | `changed_file_picker` |
+| `l` | Open lazygit | `lazygit` |
+
+Inline blame requires `git` on `PATH`. It shows the commit hash, author, and
+subject at the end of the current line, and refreshes when the editor becomes
+idle after moving or editing. Unsaved buffer contents are included; changed
+lines show `Not committed yet`. Blame is initially disabled. Its style uses
+`ui.virtual.blame`, falling back to `ui.virtual.inlay-hint`.
+
+Hunk previews expand directly below the hunk as virtual lines. Removed lines use
+`diff.minus`, added lines use `diff.plus`, and the header uses `diff.delta`.
+They use the same diff base as the gutter and include unsaved changes and pure
+deletions. Press `Space v h` again to collapse the preview, or use it on another
+hunk to move the preview there. Editing the buffer or changing its diff base
+hides the previous preview. Virtual lines do not change the buffer or enter undo
+history. Long preview lines are clipped horizontally and follow horizontal
+scrolling. Normal editing, navigation, and mouse positioning remain available.
+The existing `]g` / `[g` hunk navigation bindings remain available. Hunk navigation
+wraps in both directions: moving past the last hunk returns to the first, and
+moving before the first returns to the last. Counts also wrap; for example,
+`3]g` advances three hunks around the ring.
 
 ##### Lazygit
 

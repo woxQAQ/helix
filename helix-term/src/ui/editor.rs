@@ -45,6 +45,7 @@ pub struct EditorView {
     spinners: ProgressSpinners,
     /// Tracks if the terminal window is focused by reaction to terminal focus events
     terminal_focused: bool,
+    pub(super) inline_blame: super::git::InlineBlame,
     file_explorer: Option<FileExplorer>,
     bufferline_area: Rect,
     bufferline_tabs: Vec<(Rect, DocumentId)>,
@@ -71,6 +72,7 @@ impl EditorView {
             completion: None,
             spinners: ProgressSpinners::default(),
             terminal_focused: true,
+            inline_blame: super::git::InlineBlame::default(),
             file_explorer: None,
             bufferline_area: Rect::default(),
             bufferline_tabs: Vec::new(),
@@ -94,6 +96,10 @@ impl EditorView {
             Ok(explorer) => self.file_explorer = Some(explorer),
             Err(err) => editor.set_error(format!("File explorer: {err}")),
         }
+    }
+
+    pub fn toggle_inline_blame(&mut self, editor: &mut Editor, jobs: &mut crate::job::Jobs) {
+        self.inline_blame.toggle(editor, jobs);
     }
 
     pub fn spinners_mut(&mut self) -> &mut ProgressSpinners {
@@ -227,6 +233,13 @@ impl EditorView {
             .diagnostics_handler
             .show_cursorline_diagnostics(doc, view.id);
         let inline_diagnostic_config = config.inline_diagnostics.prepare(width, enable_cursor_line);
+        if let Some(hunk) = view.inline_hunk(doc) {
+            decorations.add_decoration(super::git::HunkDecoration::new(
+                hunk,
+                theme,
+                doc.tab_width(),
+            ));
+        }
         decorations.add_decoration(InlineDiagnostics::new(
             doc,
             theme,
@@ -234,6 +247,11 @@ impl EditorView {
             inline_diagnostic_config,
             config.end_of_line_diagnostics,
         ));
+        if is_focused {
+            for annotation in self.inline_blame.annotations(editor) {
+                decorations.add_decoration(super::git::BlameDecoration::new(annotation, theme));
+            }
+        }
         render_document(
             surface,
             inner,
@@ -1190,6 +1208,7 @@ impl EditorView {
     }
 
     pub fn handle_idle_timeout(&mut self, cx: &mut commands::Context) -> EventResult {
+        self.inline_blame.refresh(cx.editor, cx.jobs);
         commands::compute_inlay_hints_for_all_views(cx.editor, cx.jobs);
 
         EventResult::Ignored(None)

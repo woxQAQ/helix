@@ -207,6 +207,7 @@ pub struct Document {
     pub(crate) language_servers: HashMap<LanguageServerName, Arc<Client>>,
 
     diff_handle: Option<DiffHandle>,
+    diff_base_revision: u64,
     version_control_head: Option<Arc<ArcSwap<Box<str>>>>,
 
     // when document was used for most-recent-used buffer picker
@@ -760,6 +761,7 @@ impl Document {
             modified_since_accessed: false,
             language_servers: HashMap::new(),
             diff_handle: None,
+            diff_base_revision: 0,
             config,
             version_control_head: None,
             focused_at: std::time::Instant::now(),
@@ -1989,8 +1991,14 @@ impl Document {
         self.diff_handle.as_ref()
     }
 
+    /// Track base refreshes without taking the diff worker's lock during layout.
+    pub(crate) fn diff_base_revision(&self) -> u64 {
+        self.diff_base_revision
+    }
+
     /// Intialize/updates the differ for this document with a new base.
     pub fn set_diff_base(&mut self, diff_base: Vec<u8>) {
+        self.diff_base_revision = self.diff_base_revision.wrapping_add(1);
         if let Ok((diff_base, ..)) = from_reader(&mut diff_base.as_slice(), Some(self.encoding)) {
             if let Some(differ) = &self.diff_handle {
                 differ.update_diff_base(diff_base);

@@ -26,11 +26,11 @@ use helix_core::{
 use helix_view::{
     annotations::diagnostics::DiagnosticFilter,
     document::{Mode, SCRATCH_BUFFER_NAME},
-    editor::{CompleteAction, CursorShapeConfig},
+    editor::{Action, CompleteAction, CursorShapeConfig},
     graphics::{Color, CursorKind, Modifier, Rect, Style},
     input::{KeyEvent, MouseButton, MouseEvent, MouseEventKind},
     keyboard::{KeyCode, KeyModifiers},
-    Document, Editor, Theme, View,
+    Document, DocumentId, Editor, Theme, View,
 };
 use std::{mem::take, num::NonZeroUsize, ops, path::PathBuf, rc::Rc};
 
@@ -46,6 +46,8 @@ pub struct EditorView {
     /// Tracks if the terminal window is focused by reaction to terminal focus events
     terminal_focused: bool,
     file_explorer: Option<FileExplorer>,
+    bufferline_area: Rect,
+    bufferline_tabs: Vec<(Rect, DocumentId)>,
 }
 
 #[derive(Debug, Clone)]
@@ -70,6 +72,8 @@ impl EditorView {
             spinners: ProgressSpinners::default(),
             terminal_focused: true,
             file_explorer: None,
+            bufferline_area: Rect::default(),
+            bufferline_tabs: Vec::new(),
         }
     }
 
@@ -685,7 +689,9 @@ impl EditorView {
     }
 
     /// Render bufferline at the top
-    pub fn render_bufferline(editor: &Editor, viewport: Rect, surface: &mut Surface) {
+    pub fn render_bufferline(&mut self, editor: &Editor, viewport: Rect, surface: &mut Surface) {
+        self.bufferline_area = viewport;
+        self.bufferline_tabs.clear();
         let scratch = PathBuf::from(SCRATCH_BUFFER_NAME); // default filename to use for scratch buffer
         surface.clear_with(
             viewport,
@@ -724,14 +730,15 @@ impl EditorView {
             };
 
             let text = format!(" {}{} ", fname, if doc.is_modified() { "[+]" } else { "" });
-            let used_width = viewport.x.saturating_sub(x);
-            let rem_width = surface.area.width.saturating_sub(used_width);
-
+            let rem_width = viewport.right().saturating_sub(x);
+            let start = x;
             x = surface
                 .set_stringn(x, viewport.y, &text, rem_width as usize, style)
                 .0;
+            self.bufferline_tabs
+                .push((Rect::new(start, viewport.y, x - start, 1), doc.id()));
 
-            if x >= surface.area.right() {
+            if x >= viewport.right() {
                 break;
             }
         }
@@ -1242,6 +1249,24 @@ impl EditorView {
             ..
         } = *event;
 
+        if (self.bufferline_area.y..self.bufferline_area.bottom()).contains(&row)
+            && (self.bufferline_area.x..self.bufferline_area.right()).contains(&column)
+        {
+            if kind == MouseEventKind::Down(MouseButton::Left) {
+                if let Some(&(_, doc)) = self
+                    .bufferline_tabs
+                    .iter()
+                    .find(|(area, _)| (area.x..area.right()).contains(&column))
+                {
+                    self.clear_completion(cxt.editor);
+                    if view!(cxt.editor).doc != doc {
+                        cxt.editor.switch(doc, Action::Replace);
+                    }
+                }
+            }
+            return EventResult::Consumed(None);
+        }
+
         let pos_and_view = |editor: &Editor, row, column, ignore_virtual_text| {
             editor.tree.views().find_map(|(view, _focus)| {
                 view.pos_at_screen_coords(
@@ -1708,8 +1733,10 @@ impl Component for EditorView {
         // if the terminal size suddenly changed, we need to trigger a resize
         cx.editor.resize(editor_area);
 
+        self.bufferline_area = Rect::default();
+        self.bufferline_tabs.clear();
         if use_bufferline {
-            Self::render_bufferline(cx.editor, document_area.with_height(1), surface);
+            self.render_bufferline(cx.editor, document_area.with_height(1), surface);
         }
 
         for (view, is_focused) in cx.editor.tree.views() {

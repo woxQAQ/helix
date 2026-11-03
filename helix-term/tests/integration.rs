@@ -16,6 +16,7 @@ mod test {
     }
 
     mod auto_pairs;
+    mod bufferline;
     mod command_line;
     mod commands;
     mod file_explorer;

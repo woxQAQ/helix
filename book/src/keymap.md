@@ -335,8 +335,6 @@ Press `Space v` to open the Git menu:
 | --- | --- | --- |
 | `b` | Toggle current-line inline blame | `toggle_inline_blame` |
 | `h` | Toggle inline hunk preview at the cursor | `show_diff_hunk` |
-| `j` | Jump to the next hunk | `goto_next_change` |
-| `k` | Jump to the previous hunk | `goto_prev_change` |
 | `g` | Open changed file picker | `changed_file_picker` |
 | `l` | Open lazygit | `lazygit` |
 

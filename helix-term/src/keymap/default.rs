@@ -238,8 +238,6 @@ pub fn default() -> HashMap<Mode, KeyTrie> {
             "v" => { "Git"
                 "b" => toggle_inline_blame,
                 "h" => show_diff_hunk,
-                "j" => goto_next_change,
-                "k" => goto_prev_change,
                 "g" => changed_file_picker,
                 "l" => lazygit,
             },

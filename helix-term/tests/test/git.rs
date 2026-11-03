@@ -147,7 +147,7 @@ async fn git_blame_and_hunk_workflow() -> anyhow::Result<()> {
             .row,
         1
     );
-    keys("<space>vh<space>vj", &mut compositor, &mut cx)?;
+    keys("<space>vh]g", &mut compositor, &mut cx)?;
     let (view, doc) = current_ref!(cx.editor);
     assert_eq!(
         doc.selection(view.id)
@@ -155,7 +155,7 @@ async fn git_blame_and_hunk_workflow() -> anyhow::Result<()> {
             .cursor_line(doc.text().slice(..)),
         4
     );
-    keys("<space>vk", &mut compositor, &mut cx)?;
+    keys("[g", &mut compositor, &mut cx)?;
     let (view, doc) = current_ref!(cx.editor);
     assert_eq!(
         doc.selection(view.id)
@@ -171,8 +171,6 @@ async fn git_blame_and_hunk_workflow() -> anyhow::Result<()> {
         ("4]g", 4),
         ("5[g", 0),
         ("4[g", 0),
-        ("<space>vk", 4),
-        ("<space>vj", 0),
     ] {
         keys(sequence, &mut compositor, &mut cx)?;
         let (view, doc) = current_ref!(cx.editor);

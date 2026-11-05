@@ -51,6 +51,7 @@ helix-vcs = { path = "../helix-vcs" }
 helix-loader = { path = "../helix-loader" }
 
 anyhow = "1"
+notify = "8"
 portable-pty = "0.9"
 vt100 = "0.16"
 

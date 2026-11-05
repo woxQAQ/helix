@@ -27,6 +27,21 @@ fn get_repo_dir(file: &Path) -> Result<&Path> {
     file.parent().context("file has no parent directory")
 }
 
+pub fn watch_paths(directory: &Path) -> Result<Vec<(std::path::PathBuf, bool)>> {
+    let repo = open_repo(directory, false)?.to_thread_local();
+    let mut paths = vec![
+        (repo.git_dir().to_owned(), false),
+        (repo.common_dir().to_owned(), false),
+        (repo.common_dir().join("refs"), true),
+    ];
+    if let Some(workdir) = repo.workdir() {
+        paths.push((workdir.to_owned(), true));
+    }
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
 pub fn get_diff_base(file: &Path, trust_full: bool) -> Result<Vec<u8>> {
     debug_assert!(!file.exists() || file.is_file());
     debug_assert!(file.is_absolute());

@@ -250,7 +250,11 @@ impl FileExplorer {
         self.entries[self.selected].expanded = false;
     }
 
-    fn refresh(&mut self, editor: &Editor) -> io::Result<()> {
+    pub(super) fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub(super) fn refresh(&mut self, editor: &Editor) -> io::Result<()> {
         let expanded: HashSet<_> = self
             .entries
             .iter()

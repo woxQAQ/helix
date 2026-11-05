@@ -208,6 +208,7 @@ pub struct Document {
 
     diff_handle: Option<DiffHandle>,
     diff_base_revision: u64,
+    diff_base: Option<Rope>,
     version_control_head: Option<Arc<ArcSwap<Box<str>>>>,
 
     // when document was used for most-recent-used buffer picker
@@ -762,6 +763,7 @@ impl Document {
             language_servers: HashMap::new(),
             diff_handle: None,
             diff_base_revision: 0,
+            diff_base: None,
             config,
             version_control_head: None,
             focused_at: std::time::Instant::now(),
@@ -1302,24 +1304,50 @@ impl Document {
         let mut file = std::fs::File::open(&path)?;
         let (rope, ..) = from_reader(&mut file, Some(encoding))?;
 
-        // Calculate the difference between the buffer and source text, and apply it.
-        // This is not considered a modification of the contents of the file regardless
-        // of the encoding.
-        let transaction = helix_core::diff::compare_ropes(self.text(), &rope);
-        self.apply(&transaction, view.id);
-        self.append_changes_to_history(view);
-        self.reset_modified();
-        self.pickup_last_saved_time();
-        self.detect_indent_and_line_ending();
+        let saved_time = std::fs::metadata(&path)
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or_else(|_| SystemTime::now());
+        self.reload_text(view, rope, saved_time);
 
-        match provider_registry.get_diff_base(&path, trust_full) {
-            Some(diff_base) => self.set_diff_base(diff_base),
-            None => self.diff_handle = None,
-        }
-
-        self.version_control_head = provider_registry.get_current_head_name(&path, trust_full);
+        let base = provider_registry.get_diff_base(&path, trust_full);
+        let head = provider_registry.get_current_head_name(&path, trust_full);
+        self.refresh_diff_base(base, head);
 
         Ok(())
+    }
+
+    /// Apply a disk snapshot without changing the independently refreshed VCS state.
+    pub fn reload_text(&mut self, view: &mut View, rope: Rope, saved_time: SystemTime) {
+        if self.text != rope {
+            let transaction = helix_core::diff::compare_ropes(self.text(), &rope);
+            self.apply(&transaction, view.id);
+            self.append_changes_to_history(view);
+            self.detect_indent_and_line_ending();
+        }
+        self.reset_modified();
+        self.last_saved_time = saved_time;
+    }
+
+    pub fn last_saved_time(&self) -> SystemTime {
+        self.last_saved_time
+    }
+
+    /// Replace VCS state while preserving the buffer, including unsaved edits.
+    pub fn refresh_diff_base(
+        &mut self,
+        base: Option<Vec<u8>>,
+        head: Option<Arc<ArcSwap<Box<str>>>>,
+    ) {
+        self.version_control_head = head;
+        match base {
+            Some(base) => self.set_diff_base(base),
+            None => {
+                self.diff_base = None;
+                if self.diff_handle.take().is_some() {
+                    self.diff_base_revision = self.diff_base_revision.wrapping_add(1);
+                }
+            }
+        }
     }
 
     /// Sets the [`Document`]'s encoding with the encoding correspondent to `label`.
@@ -1998,15 +2026,19 @@ impl Document {
 
     /// Intialize/updates the differ for this document with a new base.
     pub fn set_diff_base(&mut self, diff_base: Vec<u8>) {
-        self.diff_base_revision = self.diff_base_revision.wrapping_add(1);
         if let Ok((diff_base, ..)) = from_reader(&mut diff_base.as_slice(), Some(self.encoding)) {
+            if self.diff_base.as_ref() == Some(&diff_base) {
+                return;
+            }
+            self.diff_base = Some(diff_base.clone());
+            self.diff_base_revision = self.diff_base_revision.wrapping_add(1);
             if let Some(differ) = &self.diff_handle {
                 differ.update_diff_base(diff_base);
                 return;
             }
             self.diff_handle = Some(DiffHandle::new(diff_base, self.text.clone()))
         } else {
-            self.diff_handle = None;
+            self.refresh_diff_base(None, self.version_control_head.clone());
         }
     }
 

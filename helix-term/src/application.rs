@@ -79,6 +79,7 @@ pub struct Application {
     lsp_progress: LspProgressMap,
 
     theme_mode: Option<theme::Mode>,
+    file_watcher: crate::file_watcher::FileWatcher,
 }
 
 #[cfg(feature = "integration")]
@@ -253,6 +254,7 @@ impl Application {
             jobs,
             lsp_progress: LspProgressMap::new(),
             theme_mode,
+            file_watcher: crate::file_watcher::FileWatcher::new(),
         };
 
         Ok(app)
@@ -313,6 +315,8 @@ impl Application {
                 return false;
             }
 
+            self.file_watcher.update(&self.editor, &mut self.compositor);
+
             use futures_util::StreamExt;
 
             tokio::select! {
@@ -325,6 +329,9 @@ impl Application {
                 }
                 Some(event) = input_stream.next() => {
                     self.handle_terminal_events(event).await;
+                }
+                Some(()) = self.file_watcher.next() => {
+                    self.file_watcher.refresh(&self.editor, &mut self.jobs);
                 }
                 Some(callback) = self.jobs.callbacks.recv() => {
                     if let Some(job) = self.jobs.handle_callback(&mut self.editor, &mut self.compositor, Ok(Some(callback))) {
@@ -663,6 +670,7 @@ impl Application {
         match event {
             EditorEvent::DocumentSaved(event) => {
                 self.handle_document_write(event);
+                self.file_watcher.request_refresh();
                 self.render().await;
             }
             EditorEvent::ConfigEvent(event) => {
@@ -766,7 +774,13 @@ impl Application {
             }) => false,
             #[cfg(not(windows))]
             event if event.is_escape() => false,
-            event => self.compositor.handle_event(&event.into(), &mut cx),
+            event => {
+                let event = event.into();
+                if matches!(event, Event::FocusGained) {
+                    self.file_watcher.request_refresh();
+                }
+                self.compositor.handle_event(&event, &mut cx)
+            }
         };
 
         if should_redraw && !self.editor.should_close() {

@@ -20,6 +20,7 @@ mod test {
     mod command_line;
     mod commands;
     mod file_explorer;
+    mod file_watcher;
     mod git;
     mod inline_hunk;
     mod movement;

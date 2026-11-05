@@ -79,6 +79,18 @@ impl EditorView {
         }
     }
 
+    pub(crate) fn file_explorer_root(&self) -> Option<&std::path::Path> {
+        self.file_explorer.as_ref().map(FileExplorer::root)
+    }
+
+    pub(crate) fn refresh_file_explorer(&mut self, editor: &mut Editor) {
+        if let Some(explorer) = &mut self.file_explorer {
+            if let Err(err) = explorer.refresh(editor) {
+                log::debug!("failed to refresh file explorer: {err}");
+            }
+        }
+    }
+
     pub fn toggle_file_explorer(&mut self, editor: &mut Editor) {
         if self.file_explorer.is_some() {
             self.file_explorer = None;

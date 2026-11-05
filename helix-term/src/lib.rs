@@ -21,6 +21,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use futures_util::Future;
+mod file_watcher;
 mod handlers;
 
 use helix_stdx::Url;

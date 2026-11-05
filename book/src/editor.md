@@ -73,6 +73,16 @@
 
 [^3]: In most cases, you also need to enable the `auto-format` setting under `languages.toml`. You can find the reasoning [here](https://github.com/helix-editor/helix/discussions/9043#discussioncomment-7811497).
 
+Helix watches workspace files and Git metadata for external changes. Buffers without
+unsaved edits reload automatically; buffers with unsaved edits keep their contents
+and show a warning when the disk version changes. Diff hunks, branch information,
+and the file explorer refresh independently of buffer edits. Changes are coalesced
+for 200 ms, and returning focus to the terminal requests another refresh. Directory
+watching respects ignore rules; explicitly opened files remain watched even inside
+ignored directories. If a file is deleted, its buffer is kept and can reload when
+the file is recreated. `:reload` and `:reload-all` remain available to explicitly
+discard edits and load the disk version.
+
 ### `[editor.clipboard-provider]` Section
 
 Helix can be configured either to use a builtin clipboard configuration or to use

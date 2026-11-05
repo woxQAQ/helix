@@ -28,6 +28,16 @@ pub struct DiffProviderRegistry {
 }
 
 impl DiffProviderRegistry {
+    /// Directories containing working-tree and repository state, including linked worktrees.
+    /// The boolean requests recursive watching; repository metadata itself only needs its refs subtree.
+    pub fn watch_paths(&self, directory: &Path) -> Vec<(PathBuf, bool)> {
+        #[cfg(feature = "git")]
+        if let Ok(paths) = git::watch_paths(directory) {
+            return paths;
+        }
+        vec![(directory.to_owned(), false)]
+    }
+
     /// Get the given file from the VCS. This provides the unedited document as a "base"
     /// for a diff to be created.
     pub fn get_diff_base(&self, file: &Path, trust_full: bool) -> Option<Vec<u8>> {

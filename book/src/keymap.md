@@ -325,6 +325,17 @@ This layer is a kludge of mappings, mostly pickers.
 | `/`     | Global search in workspace folder                                       | `global_search`                            |
 | `?`     | Open command palette                                                    | `command_palette`                          |
 
+In the file explorer sidebar (`Space e`), press `d` to delete the selected file.
+The prompt shows the path: enter `y` or `yes` and press `Enter` to permanently
+delete it. Press `Esc`, submit an empty response, or enter any other response
+to cancel. The sidebar refreshes after deletion; open buffers remain available.
+
+Press `r` to rename the selected file or directory. The prompt starts with its
+current name; edit it and press `Enter` to submit, or press `Esc` to cancel.
+Enter a name within the same directory; existing names are never overwritten.
+Open buffers follow the new path, including files inside a renamed directory.
+Press `R` to refresh the sidebar manually.
+
 > 💡 Global search displays results in a fuzzy picker, use `Space + '` to bring it back up after opening a file.
 
 ##### Git

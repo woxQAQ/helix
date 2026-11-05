@@ -125,6 +125,8 @@ pub(super) enum Outcome {
     Consumed,
     Close,
     OpenExternal(PathBuf),
+    Delete(PathBuf),
+    Rename(PathBuf),
 }
 
 impl FileExplorer {
@@ -265,7 +267,7 @@ impl FileExplorer {
         let mut refreshed = Self {
             root: self.root.clone(),
             entries: Self::children(&self.root, 0, editor)?,
-            selected: 0,
+            selected: self.selected,
             offset: self.offset,
             reveal_selection: self.reveal_selection,
             area: self.area,
@@ -282,9 +284,69 @@ impl FileExplorer {
             }
             index += 1;
         }
+        refreshed.selected = refreshed
+            .selected
+            .min(refreshed.entries.len().saturating_sub(1));
         refreshed.refresh_git_status(editor);
         *self = refreshed;
         Ok(())
+    }
+
+    pub(super) fn rename_path(
+        old_path: &Path,
+        name: &str,
+        editor: &mut Editor,
+    ) -> io::Result<PathBuf> {
+        let mut components = Path::new(name).components();
+        if !matches!(components.next(), Some(std::path::Component::Normal(_)))
+            || components.next().is_some()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "enter a name without directory components",
+            ));
+        }
+        let new_path = old_path.with_file_name(name);
+        if new_path == old_path {
+            return Ok(new_path);
+        }
+        std::fs::symlink_metadata(old_path)?;
+        match std::fs::symlink_metadata(&new_path) {
+            Ok(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("{} already exists", new_path.display()),
+                ));
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err),
+        }
+        let descendants: Vec<_> = editor
+            .documents()
+            .filter_map(|doc| {
+                let relative = doc.path()?.strip_prefix(old_path).ok()?;
+                (!relative.as_os_str().is_empty()).then(|| (doc.id(), new_path.join(relative)))
+            })
+            .collect();
+        editor.move_path(old_path, &new_path)?;
+        for (id, path) in descendants {
+            editor.set_doc_path(id, &path);
+        }
+        Ok(new_path)
+    }
+
+    pub(super) fn refresh_after_rename(
+        &mut self,
+        old_path: &Path,
+        new_path: &Path,
+        editor: &Editor,
+    ) -> io::Result<()> {
+        for entry in &mut self.entries {
+            if let Ok(relative) = entry.path.strip_prefix(old_path) {
+                entry.path = new_path.join(relative);
+            }
+        }
+        self.refresh(editor)
     }
 
     fn activate(&mut self, editor: &mut Editor, action: Action) -> Outcome {
@@ -457,7 +519,23 @@ impl FileExplorer {
                 key!(Enter) => return self.activate(editor, Action::Replace),
                 ctrl!('v') => return self.activate(editor, Action::VerticalSplit),
                 ctrl!('s') => return self.activate(editor, Action::HorizontalSplit),
-                key!('r') => self.refresh(editor).map_err(Into::into),
+                key!('d') => {
+                    if let Some(entry) = self.entries.get(self.selected) {
+                        if entry.is_dir {
+                            editor.set_error("File explorer: select a file to delete");
+                        } else {
+                            return Outcome::Delete(entry.path.clone());
+                        }
+                    }
+                    Ok(())
+                }
+                key!('r') => {
+                    if let Some(entry) = self.entries.get(self.selected) {
+                        return Outcome::Rename(entry.path.clone());
+                    }
+                    Ok(())
+                }
+                key!('R') => self.refresh(editor).map_err(Into::into),
                 _ => Ok(()),
             },
             Event::Paste(_) if self.focused => return Outcome::Consumed,

@@ -30,7 +30,7 @@ async fn sidebar_navigation_preserves_layout_and_document_focus() -> anyhow::Res
         &mut app,
         vec![
             (
-                Some("<space>eixdd"),
+                Some("<space>eixdd<esc>"),
                 Some(&|app| {
                     let (view, doc) = current_ref!(app.editor);
                     assert_eq!(view.area.x, 32);
@@ -52,7 +52,7 @@ async fn sidebar_navigation_preserves_layout_and_document_focus() -> anyhow::Res
                 }),
             ),
             (
-                Some("<space>Erj<ret>"),
+                Some("<space>ERj<ret>"),
                 Some(&|app| {
                     let (_, doc) = current_ref!(app.editor);
                     assert_eq!(doc.path(), Some(added.as_path()));
@@ -77,6 +77,179 @@ async fn sidebar_navigation_preserves_layout_and_document_focus() -> anyhow::Res
                         Some(0)
                     );
                     assert_eq!(app.editor.tree.views().count(), 2);
+                }),
+            ),
+            (Some(":qa!<ret>"), None),
+        ],
+        true,
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sidebar_delete_requires_confirmation_and_refreshes() -> anyhow::Result<()> {
+    let directory = tempfile::Builder::new()
+        .prefix("sidebar-delete-test-")
+        .tempdir_in(helix_loader::find_workspace().0)?;
+    let first = directory.path().join("first.txt");
+    let second = directory.path().join("second.txt");
+    std::fs::write(&first, "first\n")?;
+    std::fs::write(&second, "second\n")?;
+    let mut app = helpers::AppBuilder::new().with_file(&first, None).build()?;
+
+    test_key_sequences(
+        &mut app,
+        vec![
+            (
+                Some("<space>ed"),
+                Some(&|app| {
+                    assert!(first.exists());
+                    assert_eq!(current_ref!(app.editor).1.path(), Some(first.as_path()));
+                }),
+            ),
+            (
+                Some("<esc>d<ret>dn<ret>dy<esc>"),
+                Some(&|app| {
+                    assert!(first.exists());
+                    assert!(!current_ref!(app.editor).1.is_modified());
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            (
+                Some("dy<ret>"),
+                Some(&|app| {
+                    assert!(!first.exists());
+                    assert!(second.exists());
+                    assert_eq!(current_ref!(app.editor).1.text().to_string(), "first\n");
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            (
+                Some("<ret>"),
+                Some(&|app| {
+                    assert_eq!(current_ref!(app.editor).1.path(), Some(second.as_path()));
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            (
+                Some("<space>Edyes<ret>"),
+                Some(&|app| {
+                    assert!(!second.exists());
+                    assert_eq!(current_ref!(app.editor).1.text().to_string(), "second\n");
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            (Some(":qa!<ret>"), None),
+        ],
+        true,
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sidebar_rename_preserves_buffer_and_rejects_conflicts() -> anyhow::Result<()> {
+    let directory = tempfile::Builder::new()
+        .prefix("sidebar-rename-test-")
+        .tempdir_in(helix_loader::find_workspace().0)?;
+    let first = directory.path().join("first.txt");
+    let second = directory.path().join("second.txt");
+    let renamed = directory.path().join("z-renamed.txt");
+    std::fs::write(&first, "first\n")?;
+    std::fs::write(&second, "second\n")?;
+    let mut app = helpers::AppBuilder::new().with_file(&first, None).build()?;
+    let doc_id = current_ref!(app.editor).1.id();
+
+    test_key_sequences(
+        &mut app,
+        vec![
+            (
+                Some("iX<esc><space>er<C-u>cancelled.txt<esc>r<ret>r<C-u><ret>"),
+                Some(&|app| {
+                    assert!(first.exists());
+                    assert!(!directory.path().join("cancelled.txt").exists());
+                    assert_eq!(current_ref!(app.editor).1.path(), Some(first.as_path()));
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            (
+                Some("r<C-u>second.txt<ret>"),
+                Some(&|app| {
+                    assert!(first.exists());
+                    assert_eq!(std::fs::read_to_string(&second).unwrap(), "second\n");
+                    assert!(app
+                        .editor
+                        .status_msg
+                        .as_ref()
+                        .unwrap()
+                        .0
+                        .contains("already exists"));
+                }),
+            ),
+            (
+                Some("r<C-u>../outside.txt<ret>"),
+                Some(&|app| {
+                    assert!(first.exists());
+                    assert!(app
+                        .editor
+                        .status_msg
+                        .as_ref()
+                        .unwrap()
+                        .0
+                        .contains("directory components"));
+                }),
+            ),
+            (
+                Some("r<C-u>z-renamed.txt<ret><ret>"),
+                Some(&|app| {
+                    assert!(!first.exists());
+                    assert_eq!(std::fs::read_to_string(&renamed).unwrap(), "first\n");
+                    let (_, doc) = current_ref!(app.editor);
+                    assert_eq!(doc.id(), doc_id);
+                    assert_eq!(doc.path(), Some(renamed.as_path()));
+                    assert_eq!(doc.text().to_string(), "Xfirst\n");
+                    assert!(doc.is_modified());
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            (Some(":qa!<ret>"), None),
+        ],
+        true,
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sidebar_directory_rename_updates_open_descendants() -> anyhow::Result<()> {
+    let directory = tempfile::Builder::new()
+        .prefix("sidebar-rename-dir-test-")
+        .tempdir_in(helix_loader::find_workspace().0)?;
+    let nested = directory.path().join("nested");
+    let renamed = directory.path().join("renamed");
+    std::fs::create_dir(&nested)?;
+    let child = nested.join("child.txt");
+    let renamed_child = renamed.join("child.txt");
+    std::fs::write(&child, "child\n")?;
+    let mut config = helpers::test_config();
+    config.editor.file_explorer.flatten_dirs = false;
+    let mut app = helpers::AppBuilder::new()
+        .with_config(config)
+        .with_file(&child, None)
+        .build()?;
+    let doc_id = current_ref!(app.editor).1.id();
+
+    test_key_sequences(
+        &mut app,
+        vec![
+            (
+                Some("<space>ehr<C-u>renamed<ret>l<ret>"),
+                Some(&|app| {
+                    assert!(!nested.exists());
+                    assert!(renamed_child.exists());
+                    let (_, doc) = current_ref!(app.editor);
+                    assert_eq!(doc.id(), doc_id);
+                    assert_eq!(doc.path(), Some(renamed_child.as_path()));
+                    assert_eq!(doc.text().to_string(), "child\n");
+                    helpers::assert_status_not_error(&app.editor);
                 }),
             ),
             (Some(":qa!<ret>"), None),

@@ -1552,9 +1552,83 @@ impl Component for EditorView {
             if let Outcome::OpenExternal(path) = &outcome {
                 cx.jobs.callback(crate::open_external_file_callback(path));
             }
+            if let Outcome::Delete(path) = &outcome {
+                let path = path.clone();
+                super::prompt(
+                    &mut cx,
+                    format!("Permanently delete {}? [y/N] ", path.display()).into(),
+                    None,
+                    |_, _| Vec::new(),
+                    move |cx, input, event| {
+                        if event != super::PromptEvent::Validate
+                            || !matches!(input.trim(), "y" | "yes")
+                        {
+                            return;
+                        }
+                        if let Err(err) = std::fs::remove_file(&path) {
+                            cx.editor.set_error(format!(
+                                "File explorer: failed to delete {}: {err}",
+                                path.display()
+                            ));
+                            return;
+                        }
+                        crate::job::dispatch_blocking(|editor, compositor| {
+                            if let Some(view) = compositor.find::<EditorView>() {
+                                view.refresh_file_explorer(editor);
+                            }
+                        });
+                    },
+                );
+            }
+            if let Outcome::Rename(path) = &outcome {
+                let path = path.clone();
+                let name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                super::prompt_with_input(
+                    &mut cx,
+                    format!("Rename {} to: ", path.display()).into(),
+                    name,
+                    None,
+                    |_, _| Vec::new(),
+                    move |_, input, event| {
+                        if event != super::PromptEvent::Validate || input.is_empty() {
+                            return;
+                        }
+                        let old_path = path.clone();
+                        let name = input.to_owned();
+                        crate::job::dispatch_blocking(move |editor, compositor| {
+                            match FileExplorer::rename_path(&old_path, &name, editor) {
+                                Ok(new_path) => {
+                                    if let Some(explorer) = compositor
+                                        .find::<EditorView>()
+                                        .and_then(|view| view.file_explorer.as_mut())
+                                    {
+                                        if let Err(err) = explorer
+                                            .refresh_after_rename(&old_path, &new_path, editor)
+                                        {
+                                            editor.set_error(format!("File explorer: {err}"));
+                                        }
+                                    }
+                                }
+                                Err(err) => editor.set_error(format!(
+                                    "File explorer: failed to rename {}: {err}",
+                                    old_path.display()
+                                )),
+                            }
+                        });
+                    },
+                );
+            }
             match outcome {
                 Outcome::Ignored => {}
-                Outcome::Consumed | Outcome::Close | Outcome::OpenExternal(_) => {
+                Outcome::Consumed
+                | Outcome::Close
+                | Outcome::OpenExternal(_)
+                | Outcome::Delete(_)
+                | Outcome::Rename(_) => {
                     if matches!(outcome, Outcome::Close) {
                         self.file_explorer = None;
                     }

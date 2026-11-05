@@ -450,7 +450,7 @@ async fn git_status_badges_and_directory_summaries() -> anyhow::Result<()> {
     git(&root, &["add", "-A"])?;
     git(&root, &["commit", "-qm", "changes"])?;
     let mut editor = app.editor;
-    explorer.handle_event(&Event::Key(key!('r')), &mut editor);
+    explorer.handle_event(&Event::Key(key!('R')), &mut editor);
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let mut surface = Surface::empty(area);
@@ -504,7 +504,7 @@ async fn git_status_badges_and_directory_summaries() -> anyhow::Result<()> {
     git(&root, &["add", "conflict-added.txt"])?;
     git(&root, &["mv", "moved/renamed.txt", "moved/twice.txt"])?;
     git(&root, &["rm", "-q", "removed/keep.txt"])?;
-    explorer.handle_event(&Event::Key(key!('r')), &mut editor);
+    explorer.handle_event(&Event::Key(key!('R')), &mut editor);
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let mut surface = Surface::empty(area);

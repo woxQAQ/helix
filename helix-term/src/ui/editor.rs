@@ -1587,6 +1587,42 @@ impl Component for EditorView {
                     },
                 );
             }
+            if let Outcome::Create(parent) = &outcome {
+                let parent = parent.clone();
+                super::prompt(
+                    &mut cx,
+                    format!("Create file in {}: ", parent.display()).into(),
+                    None,
+                    |_, _| Vec::new(),
+                    move |_, input, event| {
+                        if event != super::PromptEvent::Validate || input.is_empty() {
+                            return;
+                        }
+                        let parent = parent.clone();
+                        let name = input.to_owned();
+                        crate::job::dispatch_blocking(move |editor, compositor| {
+                            match FileExplorer::create_path(&parent, &name) {
+                                Ok(path) => {
+                                    if let Some(explorer) = compositor
+                                        .find::<EditorView>()
+                                        .and_then(|view| view.file_explorer.as_mut())
+                                    {
+                                        if let Err(err) =
+                                            explorer.refresh_after_create(&path, editor)
+                                        {
+                                            editor.set_error(format!("File explorer: {err}"));
+                                        }
+                                    }
+                                }
+                                Err(err) => editor.set_error(format!(
+                                    "File explorer: failed to create file in {}: {err}",
+                                    parent.display()
+                                )),
+                            }
+                        });
+                    },
+                );
+            }
             if let Outcome::Rename(path) = &outcome {
                 let path = path.clone();
                 let name = path
@@ -1635,6 +1671,7 @@ impl Component for EditorView {
                 | Outcome::Close
                 | Outcome::OpenExternal(_)
                 | Outcome::Delete(_)
+                | Outcome::Create(_)
                 | Outcome::Rename(_) => {
                     if matches!(outcome, Outcome::Close) {
                         self.file_explorer = None;

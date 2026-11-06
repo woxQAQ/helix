@@ -129,6 +129,7 @@ pub(super) enum Outcome {
     OpenExternal(PathBuf),
     Delete(PathBuf),
     Rename(PathBuf),
+    Create(PathBuf),
 }
 
 impl FileExplorer {
@@ -324,11 +325,7 @@ impl FileExplorer {
         Ok(())
     }
 
-    pub(super) fn rename_path(
-        old_path: &Path,
-        name: &str,
-        editor: &mut Editor,
-    ) -> io::Result<PathBuf> {
+    fn validate_name(name: &str) -> io::Result<()> {
         let mut components = Path::new(name).components();
         if !matches!(components.next(), Some(std::path::Component::Normal(_)))
             || components.next().is_some()
@@ -338,6 +335,40 @@ impl FileExplorer {
                 "enter a name without directory components",
             ));
         }
+        Ok(())
+    }
+
+    pub(super) fn create_path(parent: &Path, name: &str) -> io::Result<PathBuf> {
+        Self::validate_name(name)?;
+        let path = parent.join(name);
+        std::fs::File::create_new(&path)?;
+        Ok(path)
+    }
+
+    pub(super) fn refresh_after_create(&mut self, path: &Path, editor: &Editor) -> io::Result<()> {
+        self.refresh(editor)?;
+        let mut index = 0;
+        while index < self.entries.len() {
+            let entry = &self.entries[index];
+            if entry.path == path {
+                self.selected = index;
+                self.reveal_selection = true;
+                break;
+            }
+            if entry.is_dir && path.starts_with(&entry.path) {
+                self.expand(index, editor)?;
+            }
+            index += 1;
+        }
+        Ok(())
+    }
+
+    pub(super) fn rename_path(
+        old_path: &Path,
+        name: &str,
+        editor: &mut Editor,
+    ) -> io::Result<PathBuf> {
+        Self::validate_name(name)?;
         let new_path = old_path.with_file_name(name);
         if new_path == old_path {
             return Ok(new_path);
@@ -551,6 +582,19 @@ impl FileExplorer {
                 key!(Enter) => return self.activate(editor, Action::Replace),
                 ctrl!('v') => return self.activate(editor, Action::VerticalSplit),
                 ctrl!('s') => return self.activate(editor, Action::HorizontalSplit),
+                key!('a') => {
+                    let parent =
+                        self.entries
+                            .get(self.selected)
+                            .map_or(self.root.as_path(), |entry| {
+                                if entry.is_dir {
+                                    &entry.path
+                                } else {
+                                    entry.path.parent().unwrap_or(&self.root)
+                                }
+                            });
+                    return Outcome::Create(parent.to_path_buf());
+                }
                 key!('d') => {
                     if let Some(entry) = self.entries.get(self.selected) {
                         return Outcome::Delete(entry.path.clone());

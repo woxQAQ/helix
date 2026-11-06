@@ -87,6 +87,112 @@ async fn sidebar_navigation_preserves_layout_and_document_focus() -> anyhow::Res
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn sidebar_create_cancels_rejects_conflicts_and_selects_file() -> anyhow::Result<()> {
+    let directory = tempfile::Builder::new()
+        .prefix("sidebar-create-test-")
+        .tempdir_in(helix_loader::find_workspace().0)?;
+    let first = directory.path().join("first.txt");
+    let created = directory.path().join("added.txt");
+    std::fs::write(&first, "first\n")?;
+    let mut app = helpers::AppBuilder::new().with_file(&first, None).build()?;
+
+    test_key_sequences(
+        &mut app,
+        vec![
+            (
+                Some("<space>eacancelled.txt<esc>a<ret>"),
+                Some(&|app| {
+                    assert!(!directory.path().join("cancelled.txt").exists());
+                    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            (
+                Some("afirst.txt<ret>"),
+                Some(&|app| {
+                    assert_eq!(std::fs::read_to_string(&first).unwrap(), "first\n");
+                    assert!(app.editor.status_msg.as_ref().unwrap().0.contains("exist"));
+                }),
+            ),
+            (
+                Some("a../outside.txt<ret>"),
+                Some(&|app| {
+                    assert!(app
+                        .editor
+                        .status_msg
+                        .as_ref()
+                        .unwrap()
+                        .0
+                        .contains("directory components"));
+                }),
+            ),
+            (
+                Some("aadded.txt<ret>"),
+                Some(&|app| {
+                    assert_eq!(std::fs::read(&created).unwrap(), b"");
+                    assert_eq!(current_ref!(app.editor).1.path(), Some(first.as_path()));
+                    assert!(!current_ref!(app.editor).1.is_modified());
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            (
+                Some("<ret>"),
+                Some(&|app| {
+                    assert_eq!(current_ref!(app.editor).1.path(), Some(created.as_path()));
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            (Some(":qa!<ret>"), None),
+        ],
+        true,
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sidebar_create_in_collapsed_directory_reveals_file() -> anyhow::Result<()> {
+    let directory = tempfile::Builder::new()
+        .prefix("sidebar-create-dir-test-")
+        .tempdir_in(helix_loader::find_workspace().0)?;
+    let nested = directory.path().join("nested");
+    std::fs::create_dir(&nested)?;
+    let first = directory.path().join("first.txt");
+    let created = nested.join("child.txt");
+    std::fs::write(&first, "first\n")?;
+    let mut config = helpers::test_config();
+    config.editor.file_explorer.flatten_dirs = false;
+    let mut app = helpers::AppBuilder::new()
+        .with_config(config)
+        .with_file(&first, None)
+        .build()?;
+
+    test_key_sequences(
+        &mut app,
+        vec![
+            (
+                Some("<space>ekachild.txt<ret>"),
+                Some(&|app| {
+                    assert_eq!(std::fs::read(&created).unwrap(), b"");
+                    assert!(!directory.path().join("child.txt").exists());
+                    assert_eq!(current_ref!(app.editor).1.path(), Some(first.as_path()));
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            (
+                Some("<ret>"),
+                Some(&|app| {
+                    assert_eq!(current_ref!(app.editor).1.path(), Some(created.as_path()));
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            (Some(":qa!<ret>"), None),
+        ],
+        true,
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn sidebar_delete_requires_confirmation_and_refreshes() -> anyhow::Result<()> {
     let directory = tempfile::Builder::new()
         .prefix("sidebar-delete-test-")

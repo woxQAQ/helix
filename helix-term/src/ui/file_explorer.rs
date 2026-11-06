@@ -29,6 +29,7 @@ struct Entry {
     name: String,
     icon: &'static str,
     is_dir: bool,
+    ignored: bool,
     depth: usize,
     expanded: bool,
 }
@@ -117,6 +118,7 @@ pub(super) struct FileExplorer {
     reveal_selection: bool,
     area: Rect,
     git_status: Arc<ArcSwap<HashMap<PathBuf, GitStatuses>>>,
+    unignored: HashMap<PathBuf, HashSet<PathBuf>>,
     pub focused: bool,
 }
 
@@ -131,7 +133,8 @@ pub(super) enum Outcome {
 
 impl FileExplorer {
     pub fn new(root: PathBuf, editor: &Editor) -> io::Result<Self> {
-        let entries = Self::children(&root, 0, editor)?;
+        let mut unignored = HashMap::new();
+        let entries = Self::children(&root, 0, editor, &mut unignored)?;
         let mut explorer = Self {
             root,
             entries,
@@ -140,6 +143,7 @@ impl FileExplorer {
             reveal_selection: true,
             area: Rect::default(),
             git_status: Arc::new(ArcSwap::from_pointee(HashMap::new())),
+            unignored,
             focused: true,
         };
         if let Some(path) = helix_view::doc!(editor).path() {
@@ -206,7 +210,12 @@ impl FileExplorer {
         });
     }
 
-    fn children(root: &Path, depth: usize, editor: &Editor) -> io::Result<Vec<Entry>> {
+    fn children(
+        root: &Path,
+        depth: usize,
+        editor: &Editor,
+        unignored: &mut HashMap<PathBuf, HashSet<PathBuf>>,
+    ) -> io::Result<Vec<Entry>> {
         root.read_dir()?;
         let loader = editor.syn_loader.load();
         Ok(super::directory_content(root, editor)?
@@ -223,6 +232,26 @@ impl FileExplorer {
                 } else {
                     file_icons::file_icon(&path, &loader)
                 },
+                ignored: path.ancestors().any(|ancestor| {
+                    let Some(parent) = ancestor.parent() else {
+                        return false;
+                    };
+                    let visible = unignored.entry(parent.to_path_buf()).or_insert_with(|| {
+                        // Classify independently of the options that hide entries in the tree.
+                        ignore::WalkBuilder::new(parent)
+                            .hidden(false)
+                            .parents(true)
+                            .follow_links(editor.config().file_explorer.follow_symlinks)
+                            .max_depth(Some(1))
+                            .add_custom_ignore_filename(helix_loader::config_dir().join("ignore"))
+                            .add_custom_ignore_filename(".helix/ignore")
+                            .build()
+                            .filter_map(Result::ok)
+                            .map(|entry| entry.into_path())
+                            .collect()
+                    });
+                    !visible.contains(ancestor)
+                }),
                 path,
                 is_dir,
                 depth,
@@ -236,7 +265,7 @@ impl FileExplorer {
         if !entry.is_dir || entry.expanded {
             return Ok(());
         }
-        let children = Self::children(&entry.path, entry.depth + 1, editor)?;
+        let children = Self::children(&entry.path, entry.depth + 1, editor, &mut self.unignored)?;
         self.entries[index].expanded = true;
         self.entries.splice(index + 1..index + 1, children);
         Ok(())
@@ -264,14 +293,17 @@ impl FileExplorer {
             .map(|entry| entry.path.clone())
             .collect();
         let selected = self.entries.get(self.selected).map(|entry| &entry.path);
+        let mut unignored = HashMap::new();
+        let entries = Self::children(&self.root, 0, editor, &mut unignored)?;
         let mut refreshed = Self {
             root: self.root.clone(),
-            entries: Self::children(&self.root, 0, editor)?,
+            entries,
             selected: self.selected,
             offset: self.offset,
             reveal_selection: self.reveal_selection,
             area: self.area,
             git_status: self.git_status.clone(),
+            unignored,
             focused: self.focused,
         };
         let mut index = 0;
@@ -656,6 +688,14 @@ impl FileExplorer {
             // Preserve directory identity and selection backgrounds while coloring changed files.
             if !entry.is_dir {
                 style.fg = foreground.or(style.fg);
+            }
+            if entry.ignored {
+                style = style.patch(
+                    theme
+                        .try_get_exact("ui.file-explorer.ignored")
+                        .unwrap_or_else(|| theme.get("ui.text.inactive")),
+                );
+                style.bg = base.bg;
             }
             surface.set_stringn(area.x, y, &label, label_width, style);
             status.render(area.right() - 1, y, surface, theme, style);

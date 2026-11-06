@@ -243,6 +243,186 @@ async fn binary_files_are_delegated_and_text_controls_stay_in_the_view() -> anyh
     Ok(())
 }
 
+/// Ignored entries remain navigable, inherit directory rules, and update on refresh.
+#[tokio::test(flavor = "multi_thread")]
+async fn ignored_entries_are_dimmed_and_refresh_with_rules() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let root = directory.path().canonicalize()?;
+    git(&root, &["init", "-q"])?;
+    std::fs::create_dir_all(root.join("build/nested"))?;
+    std::fs::create_dir(root.join("src"))?;
+    std::fs::write(root.join(".gitignore"), "build/\n*.log\n!keep.log\n")?;
+    std::fs::write(root.join("src/.gitignore"), "!debug.log\n")?;
+    std::fs::write(root.join(".ignore"), "local.txt\n")?;
+    std::fs::write(root.join(".git/info/exclude"), "excluded.txt\n")?;
+    for name in [
+        "build/nested/output.txt",
+        "src/debug.log",
+        "debug.log",
+        "keep.log",
+        "local.txt",
+        "excluded.txt",
+        "clean.txt",
+    ] {
+        std::fs::write(root.join(name), "contents\n")?;
+    }
+    let mut editor = application()?.editor;
+    editor.theme =
+        helix_view::theme::Loader::new(helix_loader::runtime_dirs()).load("catppuccin_mocha")?;
+    let mut explorer = FileExplorer::new(root.clone(), &editor)?;
+    let area = Rect::new(0, 0, 80, 30);
+    explorer.layout(area, 40);
+    // Use the normal navigation handler to enter an ignored directory.
+    explorer.selected = explorer
+        .entries
+        .iter()
+        .position(|entry| entry.name == "build")
+        .unwrap();
+    explorer.handle_event(&Event::Key(key!('l')), &mut editor);
+    explorer.handle_event(&Event::Key(key!('j')), &mut editor);
+    explorer.handle_event(&Event::Key(key!('l')), &mut editor);
+    let src = explorer
+        .entries
+        .iter()
+        .position(|entry| entry.name == "src")
+        .unwrap();
+    explorer.expand(src, &editor)?;
+
+    for (name, ignored) in [
+        ("build", true),
+        ("nested", true),
+        ("output.txt", true),
+        ("src", false),
+        ("debug.log", true),
+        ("keep.log", false),
+        ("local.txt", true),
+        ("excluded.txt", true),
+        ("clean.txt", false),
+    ] {
+        let indices: Vec<_> = explorer
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.name == name)
+            .map(|(index, _)| index)
+            .collect();
+        assert!(!indices.is_empty(), "missing entry {name}");
+        for index in indices {
+            let ignored = ignored && explorer.entries[index].path != root.join("src/debug.log");
+            explorer.selected = index;
+            for focused in [true, false] {
+                explorer.focused = focused;
+                let mut surface = Surface::empty(area);
+                explorer.render(&mut surface, &editor);
+                let entry = &explorer.entries[index];
+                assert_eq!(
+                    entry.ignored,
+                    ignored,
+                    "ignore state for {}",
+                    entry.path.display()
+                );
+                let cell = surface
+                    .get((entry.depth * 2) as u16, index as u16 + 1)
+                    .unwrap();
+                if ignored {
+                    assert_eq!(
+                        cell.fg,
+                        editor.theme.get("ui.text.inactive").fg.unwrap(),
+                        "foreground for {name}"
+                    );
+                }
+                let selection = if focused {
+                    "ui.selection.primary"
+                } else {
+                    "ui.selection"
+                };
+                assert_eq!(cell.bg, editor.theme.get(selection).bg.unwrap());
+            }
+        }
+    }
+    // An explicit theme scope overrides the fallback without replacing the selection background.
+    let original_theme = editor.theme.clone();
+    let mut theme = helix_view::theme::DEFAULT_THEME_DATA.clone();
+    theme.as_table_mut().unwrap().insert(
+        "ui.file-explorer.ignored".into(),
+        toml::from_str::<toml::Value>("fg = '#123456'\nbg = '#654321'\nmodifiers = ['italic']")?,
+    );
+    editor.theme = Theme::from(theme);
+    explorer.selected = explorer
+        .entries
+        .iter()
+        .position(|entry| entry.name == "local.txt")
+        .unwrap();
+    let mut surface = Surface::empty(area);
+    explorer.render(&mut surface, &editor);
+    let cell = surface.get(0, explorer.selected as u16 + 1).unwrap();
+    assert_eq!(cell.fg, Color::Rgb(0x12, 0x34, 0x56));
+    assert_eq!(cell.bg, editor.theme.get("ui.selection").bg.unwrap());
+    assert!(cell
+        .modifier
+        .contains(helix_view::graphics::Modifier::ITALIC));
+    editor.theme = original_theme;
+
+    // Rules from outside an explorer's root still apply, including ignored ancestors.
+    let nested = FileExplorer::new(root.join("build/nested"), &editor)?;
+    assert!(
+        nested
+            .entries
+            .iter()
+            .find(|entry| entry.name == "output.txt")
+            .unwrap()
+            .ignored
+    );
+
+    explorer.focused = true;
+    explorer.selected = explorer
+        .entries
+        .iter()
+        .position(|entry| entry.name == "output.txt")
+        .unwrap();
+    explorer.handle_event(&Event::Key(key!(Enter)), &mut editor);
+    assert_eq!(
+        helix_view::doc!(editor).path(),
+        Some(root.join("build/nested/output.txt").as_path())
+    );
+
+    std::fs::write(root.join(".gitignore"), "")?;
+    explorer.focused = true;
+    explorer.handle_event(&Event::Key(key!('R')), &mut editor);
+    assert!(
+        !explorer
+            .entries
+            .iter()
+            .find(|entry| entry.name == "output.txt")
+            .unwrap()
+            .ignored
+    );
+    assert!(
+        explorer
+            .entries
+            .iter()
+            .find(|entry| entry.name == "local.txt")
+            .unwrap()
+            .ignored
+    );
+
+    // Flattening must preserve an ignore match on any component of the label.
+    std::fs::write(root.join(".gitignore"), "build/nested/\n")?;
+    let mut config = (*editor.config()).clone();
+    config.file_explorer.flatten_dirs = true;
+    editor.config = Arc::new(ArcSwap::from_pointee(config));
+    explorer.refresh(&editor)?;
+    assert!(
+        explorer
+            .entries
+            .iter()
+            .find(|entry| entry.name == "build/nested")
+            .unwrap()
+            .ignored
+    );
+    Ok(())
+}
+
 /// Exercise the sidebar against a real repository, including index-only changes and refresh.
 #[tokio::test(flavor = "multi_thread")]
 async fn git_status_badges_and_directory_summaries() -> anyhow::Result<()> {

@@ -147,6 +147,114 @@ async fn sidebar_delete_requires_confirmation_and_refreshes() -> anyhow::Result<
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn sidebar_directory_delete_requires_confirmation_and_refreshes() -> anyhow::Result<()> {
+    let directory = tempfile::Builder::new()
+        .prefix("sidebar-delete-dir-test-")
+        .tempdir_in(helix_loader::find_workspace().0)?;
+    let empty = directory.path().join("empty");
+    let nested = directory.path().join("nested");
+    let child = nested.join("deeper/child.txt");
+    let remaining = directory.path().join("remaining.txt");
+    std::fs::create_dir(&empty)?;
+    std::fs::create_dir_all(child.parent().unwrap())?;
+    std::fs::write(&child, "child\n")?;
+    std::fs::write(&remaining, "remaining\n")?;
+    let mut config = helpers::test_config();
+    config.editor.file_explorer.flatten_dirs = false;
+    let mut app = helpers::AppBuilder::new()
+        .with_config(config)
+        .with_file(&child, None)
+        .build()?;
+
+    test_key_sequences(
+        &mut app,
+        vec![
+            (
+                Some("<space>ehhhhkd"),
+                Some(&|app| {
+                    assert!(empty.is_dir());
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            (
+                Some("<esc>d<ret>dn<ret>dy<esc>"),
+                Some(&|app| {
+                    assert!(empty.is_dir());
+                    assert!(child.exists());
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            (
+                Some("dy<ret>"),
+                Some(&|app| {
+                    assert!(!empty.exists());
+                    assert!(child.exists());
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            (
+                Some("dyes<ret>"),
+                Some(&|app| {
+                    assert!(!nested.exists());
+                    assert!(remaining.exists());
+                    assert_eq!(current_ref!(app.editor).1.text().to_string(), "child\n");
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            (
+                Some("<ret>"),
+                Some(&|app| {
+                    assert_eq!(current_ref!(app.editor).1.path(), Some(remaining.as_path()));
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            (Some(":qa!<ret>"), None),
+        ],
+        true,
+    )
+    .await
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn sidebar_delete_directory_symlink_preserves_target() -> anyhow::Result<()> {
+    let directory = tempfile::Builder::new()
+        .prefix("sidebar-delete-symlink-test-")
+        .tempdir_in(helix_loader::find_workspace().0)?;
+    let target = directory.path().join("target");
+    let link = directory.path().join("link");
+    let child = target.join("child.txt");
+    std::fs::create_dir(&target)?;
+    std::fs::write(&child, "child\n")?;
+    std::os::unix::fs::symlink(&target, &link)?;
+    let mut config = helpers::test_config();
+    config.editor.file_explorer.flatten_dirs = false;
+    config.editor.file_explorer.follow_symlinks = true;
+    let mut app = helpers::AppBuilder::new()
+        .with_config(config)
+        .with_file(&child, None)
+        .build()?;
+
+    test_key_sequences(
+        &mut app,
+        vec![
+            (
+                Some("<space>ehkdy<ret>"),
+                Some(&|app| {
+                    assert!(std::fs::symlink_metadata(&link).is_err());
+                    assert!(target.is_dir());
+                    assert_eq!(std::fs::read_to_string(&child).unwrap(), "child\n");
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            (Some(":qa!<ret>"), None),
+        ],
+        true,
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn sidebar_rename_preserves_buffer_and_rejects_conflicts() -> anyhow::Result<()> {
     let directory = tempfile::Builder::new()
         .prefix("sidebar-rename-test-")

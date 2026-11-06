@@ -1565,7 +1565,14 @@ impl Component for EditorView {
                         {
                             return;
                         }
-                        if let Err(err) = std::fs::remove_file(&path) {
+                        let result = std::fs::symlink_metadata(&path).and_then(|metadata| {
+                            if metadata.is_dir() {
+                                std::fs::remove_dir_all(&path)
+                            } else {
+                                std::fs::remove_file(&path)
+                            }
+                        });
+                        if let Err(err) = result {
                             cx.editor.set_error(format!(
                                 "File explorer: failed to delete {}: {err}",
                                 path.display()

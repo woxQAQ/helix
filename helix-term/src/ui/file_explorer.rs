@@ -553,11 +553,7 @@ impl FileExplorer {
                 ctrl!('s') => return self.activate(editor, Action::HorizontalSplit),
                 key!('d') => {
                     if let Some(entry) = self.entries.get(self.selected) {
-                        if entry.is_dir {
-                            editor.set_error("File explorer: select a file to delete");
-                        } else {
-                            return Outcome::Delete(entry.path.clone());
-                        }
+                        return Outcome::Delete(entry.path.clone());
                     }
                     Ok(())
                 }

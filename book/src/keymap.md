@@ -330,11 +330,13 @@ The prompt shows the path: enter `y` or `yes` and press `Enter` to permanently
 delete it. Press `Esc`, submit an empty response, or enter any other response
 to cancel. The sidebar refreshes after deletion; open buffers remain available.
 
-Press `a` to create a file inside the selected directory, or beside the selected
-file. In an empty sidebar, the file is created in the explorer's root directory.
-Enter a file name without directory components and press `Enter`; press `Esc` or
-submit an empty name to cancel. Existing paths are never overwritten. The sidebar
-refreshes and selects the new file; press `Enter` to open it.
+Press `a` to create a file or directory inside the selected directory, or beside
+the selected file. In an empty sidebar, the entry is created in the explorer's
+root directory. Enter a name and press `Enter`; end the name with `/` to create a
+directory (for example, `a/`). Other directory components are not allowed. Press
+`Esc` or submit an empty name to cancel. Existing paths are never overwritten.
+The sidebar refreshes and selects the new entry; press `Enter` to open a file or
+expand a directory.
 
 Press `r` to rename the selected file or directory. The prompt starts with its
 current name; edit it and press `Enter` to submit, or press `Esc` to cancel.

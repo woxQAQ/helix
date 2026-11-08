@@ -1591,7 +1591,11 @@ impl Component for EditorView {
                 let parent = parent.clone();
                 super::prompt(
                     &mut cx,
-                    format!("Create file in {}: ", parent.display()).into(),
+                    format!(
+                        "Create in {} (trailing / for directory): ",
+                        parent.display()
+                    )
+                    .into(),
                     None,
                     |_, _| Vec::new(),
                     move |_, input, event| {
@@ -1615,7 +1619,7 @@ impl Component for EditorView {
                                     }
                                 }
                                 Err(err) => editor.set_error(format!(
-                                    "File explorer: failed to create file in {}: {err}",
+                                    "File explorer: failed to create in {}: {err}",
                                     parent.display()
                                 )),
                             }

@@ -339,9 +339,15 @@ impl FileExplorer {
     }
 
     pub(super) fn create_path(parent: &Path, name: &str) -> io::Result<PathBuf> {
+        let is_dir = name.ends_with(std::path::is_separator);
+        let name = name.trim_end_matches(std::path::is_separator);
         Self::validate_name(name)?;
         let path = parent.join(name);
-        std::fs::File::create_new(&path)?;
+        if is_dir {
+            std::fs::create_dir(&path)?;
+        } else {
+            std::fs::File::create_new(&path)?;
+        }
         Ok(path)
     }
 

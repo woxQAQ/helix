@@ -259,7 +259,7 @@ Note that the ignore files consulted by the file explorer when `ignore` is set t
 |`git-ignore` | Enables reading `.gitignore` files | `false`
 |`git-global` | Enables reading global `.gitignore`, whose path is specified in git's config: `core.excludesfile` option | `false`
 |`git-exclude` | Enables reading `.git/info/exclude` files | `false`
-|`flatten-dirs` | Enables flattening single child directories | `true`
+|`flatten-dirs` | Enables flattening single child directories in directory pickers and their previews; the sidebar always shows separate directories | `true`
 |`sidebar-width` | Sidebar width in columns, including the separator; constrained to leave room for the document | `30`
 |`icons` | Show Nerd Font file and directory icons in the sidebar; requires a Nerd Font in the terminal | `true`
 

@@ -247,7 +247,8 @@ pub struct FileExplorerConfig {
     /// Enables reading `.git/info/exclude` files.
     /// Whether to hide files listed in .git/info/exclude in file picker and global search results. Defaults to false.
     pub git_exclude: bool,
-    /// Whether to flatten single-child directories in file explorer. Defaults to true.
+    /// Whether to flatten single-child directories in directory pickers and their previews. Defaults to true.
+    /// The file explorer sidebar always shows each directory separately.
     pub flatten_dirs: bool,
     /// Width of the file explorer sidebar, including its separator. Defaults to 30.
     pub sidebar_width: u16,

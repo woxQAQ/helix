@@ -219,7 +219,7 @@ impl FileExplorer {
     ) -> io::Result<Vec<Entry>> {
         root.read_dir()?;
         let loader = editor.syn_loader.load();
-        Ok(super::directory_content(root, editor)?
+        Ok(super::directory_content(root, editor, false)?
             .into_iter()
             .filter(|(path, _)| *path != root.join(".."))
             .map(|(path, is_dir)| Entry {

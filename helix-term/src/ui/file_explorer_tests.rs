@@ -406,7 +406,7 @@ async fn ignored_entries_are_dimmed_and_refresh_with_rules() -> anyhow::Result<(
             .ignored
     );
 
-    // Flattening must preserve an ignore match on any component of the label.
+    // Picker flattening must not merge directories in the sidebar or hide their ignore status.
     std::fs::write(root.join(".gitignore"), "build/nested/\n")?;
     let mut config = (*editor.config()).clone();
     config.file_explorer.flatten_dirs = true;
@@ -416,7 +416,7 @@ async fn ignored_entries_are_dimmed_and_refresh_with_rules() -> anyhow::Result<(
         explorer
             .entries
             .iter()
-            .find(|entry| entry.name == "build/nested")
+            .find(|entry| entry.path == root.join("build/nested"))
             .unwrap()
             .ignored
     );

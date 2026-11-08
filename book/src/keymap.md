@@ -330,6 +330,10 @@ The prompt shows the path: enter `y` or `yes` and press `Enter` to permanently
 delete it. Press `Esc`, submit an empty response, or enter any other response
 to cancel. The sidebar refreshes after deletion; open buffers remain available.
 
+The sidebar shows each directory as a separate entry, including directories with
+only one child directory. Press `l` or `Right` to expand a directory, and `h` or
+`Left` to collapse it or select its parent.
+
 Press `a` to create a file or directory inside the selected directory, or beside
 the selected file. In an empty sidebar, the entry is created in the explorer's
 root directory. Enter a name and press `Enter`; end the name with `/` to create a

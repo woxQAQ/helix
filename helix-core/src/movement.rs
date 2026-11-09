@@ -10,7 +10,7 @@ use crate::{
         next_grapheme_boundary, nth_next_grapheme_boundary, nth_prev_grapheme_boundary,
         prev_grapheme_boundary,
     },
-    line_ending::rope_is_line_ending,
+    line_ending::{line_end_char_index, rope_is_line_ending},
     position::char_idx_at_visual_block_offset,
     syntax,
     text_annotations::TextAnnotations,
@@ -113,8 +113,10 @@ pub fn move_vertically_visual(
     if dir == Direction::Forward {
         new_pos += (virtual_rows != 0) as usize;
     }
-    if let Some(fold) = annotations.folds().iter().find(|fold| fold.end == new_pos) {
-        new_pos = fold.start;
+    if new_pos == line_end_char_index(&slice, slice.char_to_line(new_pos)) {
+        if let Some(fold) = annotations.folds().iter().find(|fold| fold.end == new_pos) {
+            new_pos = fold.start;
+        }
     }
 
     // Special-case to avoid moving to the end of the last non-empty line.
@@ -138,12 +140,12 @@ pub fn move_vertically(
 ) -> Range {
     annotations.clear_line_annotations();
     let pos = range.cursor(slice);
-    let pos = annotations
+    let line_idx = slice.char_to_line(pos);
+    let line_idx = annotations
         .folds()
         .iter()
-        .find(|fold| fold.end == pos)
-        .map_or(pos, |fold| fold.start);
-    let line_idx = slice.char_to_line(pos);
+        .find(|fold| slice.char_to_line(fold.end) == line_idx)
+        .map_or(line_idx, |fold| slice.char_to_line(fold.start));
     let line_start = slice.line_to_char(line_idx);
 
     // Compute the current position's 2d coordinates.
@@ -152,7 +154,6 @@ pub fn move_vertically(
         .old_visual_position
         .map_or((visual_pos.row as u32, visual_pos.col as u32), |pos| pos);
     new_row = new_row.max(visual_pos.row as u32);
-    let line_idx = slice.char_to_line(pos);
 
     // Compute the new position.
     let mut new_line_idx = match dir {

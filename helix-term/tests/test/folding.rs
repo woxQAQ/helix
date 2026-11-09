@@ -213,6 +213,119 @@ async fn folding_preserves_highlights_and_chevrons_toggle_with_mouse() -> anyhow
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn folding_match_preserves_closing_delimiters_and_navigation() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("match.rs");
+    for soft_wrap in [false, true] {
+        for newline in ["\n", "\r\n"] {
+            let source = [
+                "fn example(&self) {",
+                "    match self {",
+                "        Self::A => \"中文\",",
+                "        Self::B => \"other\",",
+                "    };",
+                "    let tail = 1;",
+                "}",
+                "",
+            ]
+            .join(newline);
+            std::fs::write(&path, &source)?;
+            let mut config = test_config();
+            config.editor.soft_wrap.enable = Some(soft_wrap);
+            let mut app = AppBuilder::new()
+                .with_config(config)
+                .with_file(&path, Some(helix_core::Position::new(1, 4)))
+                .build()?;
+            let area = Rect::new(3, 2, 80, 15);
+            let mut compositor = Compositor::new(area);
+            compositor.push(Box::new(EditorView::new(Keymaps::new(Box::new(
+                ArcSwap::from_pointee(keymap::default()),
+            )))));
+            let mut jobs = Jobs::new();
+            let mut cx = Context {
+                editor: &mut app.editor,
+                scroll: None,
+                jobs: &mut jobs,
+            };
+            let mut surface = Buffer::empty(area);
+            compositor.render(area, &mut surface, &mut cx);
+            for key in parse_macro("zf")? {
+                compositor.handle_event(&Event::Key(key), &mut cx);
+            }
+            surface.reset();
+            compositor.render(area, &mut surface, &mut cx);
+            let (view, doc) = current_ref!(cx.editor);
+            let inner = view.inner_area(doc);
+            let rows: Vec<String> = (inner.y..inner.bottom())
+                .map(|y| {
+                    (inner.x..inner.right())
+                        .map(|x| surface[(x, y)].symbol.as_str())
+                        .collect()
+                })
+                .collect();
+            assert_eq!(rows[1].trim_end(), "    match self {…};");
+            assert_eq!(rows[2].trim_end(), "    let tail = 1;");
+            assert_eq!(rows[3].trim_end(), "}");
+            assert!(rows.iter().all(|row| !row.contains("Self::")));
+            let end = doc.folds(view.id)[0].end;
+            assert_eq!(doc.text().char(end), '}');
+            let closing_column = inner.x + "    match self {…".chars().count() as u16;
+            assert_eq!(
+                view.pos_at_screen_coords(doc, inner.y + 1, closing_column, false),
+                Some(end)
+            );
+            for kind in [
+                MouseEventKind::Down(MouseButton::Left),
+                MouseEventKind::Up(MouseButton::Left),
+            ] {
+                compositor.handle_event(
+                    &Event::Mouse(MouseEvent {
+                        kind,
+                        row: inner.y + 1,
+                        column: closing_column + 1,
+                        modifiers: KeyModifiers::empty(),
+                    }),
+                    &mut cx,
+                );
+            }
+            for key in parse_macro("j")? {
+                compositor.handle_event(&Event::Key(key), &mut cx);
+            }
+            let (view, doc) = current_ref!(cx.editor);
+            assert_eq!(
+                doc.selection(view.id)
+                    .primary()
+                    .cursor_line(doc.text().slice(..)),
+                5
+            );
+            assert_eq!(doc.folds(view.id).len(), 1);
+            for key in parse_macro("k")? {
+                compositor.handle_event(&Event::Key(key), &mut cx);
+            }
+            let (view, doc) = current_ref!(cx.editor);
+            let cursor = doc
+                .selection(view.id)
+                .primary()
+                .cursor(doc.text().slice(..));
+            assert_eq!(
+                view.screen_coords_at_pos(doc, doc.text().slice(..), cursor)
+                    .unwrap()
+                    .row,
+                1
+            );
+            assert_eq!(doc.folds(view.id).len(), 1);
+            for key in parse_macro("zo")? {
+                compositor.handle_event(&Event::Key(key), &mut cx);
+            }
+            let (view, doc) = current_ref!(cx.editor);
+            assert!(doc.folds(view.id).is_empty());
+            assert_eq!(doc.text().to_string(), source);
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn folding_renders_and_moves_over_hidden_lines() -> anyhow::Result<()> {
     for soft_wrap in [false, true] {
         for newline in ["\n", "\r\n"] {

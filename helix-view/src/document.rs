@@ -2508,20 +2508,29 @@ impl Document {
         self.folds.get(&view_id).map_or(&[], Vec::as_slice)
     }
 
-    /// Conceal the lines following the first line through the last selected line.
+    /// Conceal the lines following the first line, retaining a closing delimiter.
     pub fn fold(&mut self, view_id: ViewId, first_line: usize, last_line: usize) {
         let text = self.text.slice(..);
         if first_line >= last_line || last_line >= text.len_lines() {
             return;
         }
         let start = helix_core::line_ending::line_end_char_index(&text, first_line);
-        let end = helix_core::line_ending::line_end_char_index(&text, last_line);
+        let last_line_start = text.line_to_char(last_line);
+        let closing_column = text
+            .line(last_line)
+            .chars()
+            .position(|ch| !ch.is_whitespace());
+        let end = closing_column
+            .map(|column| last_line_start + column)
+            .filter(|&pos| matches!(text.char(pos), '}' | ']' | ')'))
+            .unwrap_or_else(|| helix_core::line_ending::line_end_char_index(&text, last_line));
         let folds = self.folds.entry(view_id).or_default();
         folds.retain(|fold| fold.end <= start || end <= fold.start);
         let index = folds.partition_point(|fold| fold.start < start);
         folds.insert(index, start..end);
         let selection = self.selection(view_id).clone().transform(|range| {
-            if start < range.cursor(text) && range.cursor(text) <= end {
+            let line = range.cursor_line(text);
+            if first_line < line && line <= last_line {
                 Range::point(text.line_to_char(first_line))
             } else {
                 range
@@ -2539,7 +2548,7 @@ impl Document {
         };
         let before = folds.len();
         folds.retain(|fold| {
-            !(fold.start <= cursor && cursor <= fold.end || text.char_to_line(fold.start) == line)
+            !(text.char_to_line(fold.start) <= line && line <= text.char_to_line(fold.end))
         });
         before != folds.len()
     }

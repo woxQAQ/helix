@@ -797,10 +797,9 @@ fn unfold(cx: &mut Context) {
 fn toggle_fold(cx: &mut Context) {
     let (view, doc) = current!(cx.editor);
     let has_fold = doc.selection(view.id).iter().any(|range| {
-        let cursor = range.cursor(doc.text().slice(..));
+        let line = doc.text().char_to_line(range.cursor(doc.text().slice(..)));
         doc.folds(view.id).iter().any(|fold| {
-            fold.start <= cursor && cursor <= fold.end
-                || doc.text().char_to_line(fold.start) == doc.text().char_to_line(cursor)
+            doc.text().char_to_line(fold.start) <= line && line <= doc.text().char_to_line(fold.end)
         })
     });
     if has_fold {

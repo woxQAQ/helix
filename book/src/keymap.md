@@ -212,6 +212,8 @@ useful when you're simply looking over text and not actively editing it.
 | `Ctrl-d`             | Move cursor and page half page down                       | `page_cursor_half_down` |
 
 Folding keeps the first line visible and replaces hidden lines with `…`.
+A closing `}`, `]`, or `)` on the final line stays visible, producing forms such
+as `match self {…}` while preserving trailing punctuation.
 The line-number gutter shows `▼` on foldable syntax nodes and `▶` on closed folds;
 click the chevron to fold or unfold. With a single-line selection, the smallest
 enclosing multiline Tree-sitter node is folded instead. Folds belong to the

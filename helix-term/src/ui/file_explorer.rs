@@ -27,7 +27,6 @@ mod tests;
 struct Entry {
     path: PathBuf,
     name: String,
-    icon: &'static str,
     is_dir: bool,
     ignored: bool,
     depth: usize,
@@ -112,6 +111,7 @@ impl GitStatuses {
 /// A persistent directory tree beside the editor's document views.
 pub(super) struct FileExplorer {
     root: PathBuf,
+    icons: Arc<file_icons::IconTheme>,
     entries: Vec<Entry>,
     selected: usize,
     offset: usize,
@@ -138,6 +138,7 @@ impl FileExplorer {
         let entries = Self::children(&root, 0, editor, &mut unignored)?;
         let mut explorer = Self {
             root,
+            icons: file_icons::IconTheme::load(&helix_loader::config_dir().join("icons.toml")),
             entries,
             selected: 0,
             offset: 0,
@@ -218,7 +219,6 @@ impl FileExplorer {
         unignored: &mut HashMap<PathBuf, HashSet<PathBuf>>,
     ) -> io::Result<Vec<Entry>> {
         root.read_dir()?;
-        let loader = editor.syn_loader.load();
         Ok(super::directory_content(root, editor, false)?
             .into_iter()
             .filter(|(path, _)| *path != root.join(".."))
@@ -228,11 +228,6 @@ impl FileExplorer {
                     .unwrap_or(&path)
                     .to_string_lossy()
                     .into_owned(),
-                icon: if is_dir {
-                    file_icons::FOLDER
-                } else {
-                    file_icons::file_icon(&path, &loader)
-                },
                 ignored: path.ancestors().any(|ancestor| {
                     let Some(parent) = ancestor.parent() else {
                         return false;
@@ -298,6 +293,7 @@ impl FileExplorer {
         let entries = Self::children(&self.root, 0, editor, &mut unignored)?;
         let mut refreshed = Self {
             root: self.root.clone(),
+            icons: self.icons.clone(),
             entries,
             selected: self.selected,
             offset: self.offset,
@@ -648,6 +644,7 @@ impl FileExplorer {
         }
         let theme = &editor.theme;
         let icons = editor.config().file_explorer.icons;
+        let loader = editor.syn_loader.load();
         let git_status = self.git_status.load();
         let width = usize::from(area.width - 1);
         let header = if self.focused {
@@ -662,7 +659,7 @@ impl FileExplorer {
             .unwrap_or(self.root.as_os_str())
             .to_string_lossy();
         let title = if icons {
-            format!("{} {title}", file_icons::FOLDER_OPEN)
+            format!("{} {title}", self.icons.directory_icon(&self.root, true))
         } else {
             title.into_owned()
         };
@@ -710,10 +707,10 @@ impl FileExplorer {
             let label_width = status.label_width(width);
             let show_icon = icons && label_width >= 4;
             let icon = if show_icon {
-                if entry.is_dir && entry.expanded {
-                    file_icons::FOLDER_OPEN
+                if entry.is_dir {
+                    self.icons.directory_icon(&entry.path, entry.expanded)
                 } else {
-                    entry.icon
+                    self.icons.file_icon(&entry.path, &loader)
                 }
             } else {
                 ""

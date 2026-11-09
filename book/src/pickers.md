@@ -16,12 +16,38 @@ You can insert the contents of a [register](./registers.md) using `Ctrl-r` follo
 
 The sidebar shares the ignore and directory-flattening options in [`[editor.file-explorer]`](./editor.md#editorfile-explorer-section). Set `sidebar-width` there to change its width (30 columns by default, including the separator). It temporarily hides when the terminal is too small to leave room for both the tree and the document.
 
-The sidebar displays Nerd Font icons by default. Configure the terminal to use a Nerd Font (preferably a Mono variant). File icons follow Helix's language detection, with specific icons for common project files, images, archives, and other media. Expanded and collapsed directories use different folder icons. To disable the icons:
+The sidebar displays Nerd Fonts 3 Material Design Icons (`nf-md-*`) by default. Configure the terminal to use a Nerd Font (preferably a Mono variant). Icons are defined by an embedded data-driven theme in `runtime/icons.toml`, generated from the complete Zed Material Icon Theme file-name, suffix, and directory associations. The default contains over 2,100 file-name associations, 1,300 suffixes, and 4,600 directory names. Upstream SVG icon IDs are adapted to NF Material glyphs; IDs without an adapted glyph retain their associations and use generic file or folder icons. File matching checks the full file name, then progressively shorter compound suffixes (for example, `stories.tsx` before `tsx`), then the name before the first dot (for example, `Dockerfile` in `Dockerfile.prod`). Helix's language detection supplies a fallback, including custom file types from `languages.toml`, followed by the default file icon. File and directory name associations are ASCII case-insensitive.
+
+Directory names such as `src`, `docs`, `tests`, and `node_modules` have their own collapsed and expanded icons. The root heading uses the expanded icon. Missing named-directory states fall back to the generic folder icon for that state. To disable the icons:
 
 ```toml
 [editor.file-explorer]
 icons = false
 ```
+
+Create `icons.toml` in the Helix configuration directory (next to `config.toml`) to override the built-in icon theme. Only supplied entries are replaced; other built-in associations and directory states are retained. Reopen the sidebar to load changes. For example:
+
+```toml
+# Define a glyph once, then reference its ID in associations.
+[file_icons]
+project = "\U000F0D09" # nf-md-folder_pound
+project-open = "\U000F0D0A" # nf-md-folder_pound_outline
+
+[file_stems]
+"project.json" = "project"
+
+[file_suffixes]
+"stories.tsx" = "react"
+
+[language_icons]
+rust = "rust"
+
+[named_directory_icons.my-project]
+collapsed = "project"
+expanded = "project-open"
+```
+
+`file_icons` maps icon IDs to single glyphs occupying one terminal column. `file_stems` maps specific file names, `file_suffixes` maps suffixes without a leading dot, and `language_icons` maps Helix language IDs to icon IDs. `directory_icons` sets the generic `collapsed` and `expanded` icon IDs; `named_directory_icons` provides the same pair for individual directory names. Icon IDs are case-sensitive. See `runtime/icons.toml` for built-in IDs and associations, and `contrib/icon-theme/README.md` for generation and adaptation details. An invalid overlay, including unknown icon IDs or invalid glyphs, is logged and falls back to the complete built-in theme.
 
 Git changes color file names and icons. Modified files and `M` markers default to the theme's `warning` foreground (typically yellow); themes can override this with `"ui.file-explorer.git.modified"`. Other states use the theme's `diff` foregrounds. Directory names, folder icons, and the root heading retain their normal colors, with descendant changes summarized in the status badge. Selection backgrounds remain visible. The status column shows `M` for modified, `A` for staged additions, `?` for untracked, `D` for deleted, `R` for renamed, and `!` for conflicts. Both staged and working-tree changes are included, including deleted files that no longer appear in the tree. Clean files have no badge. Ignored files and directories use `ui.file-explorer.ignored`, falling back to `ui.text.inactive`; this also applies to descendants of ignored directories. Ignore styling reads `.gitignore`, `.ignore`, Git's global excludes and `.git/info/exclude`, and Helix ignore files independently of the options that hide entries. Ignored entries remain navigable, and selection backgrounds remain visible.
 

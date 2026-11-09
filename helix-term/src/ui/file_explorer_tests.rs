@@ -54,6 +54,284 @@ fn git(root: &Path, args: &[&str]) -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn directory_icons_follow_names_and_expansion() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let root = directory.path().join("docs");
+    std::fs::create_dir(&root)?;
+    let root = root.canonicalize()?;
+    for name in ["src", "Docs", "node_modules", "ordinary", "目录"] {
+        std::fs::create_dir(root.join(name))?;
+    }
+    // A file with a directory's special name must retain its file icon.
+    std::fs::write(root.join("config"), "contents\n")?;
+    let mut editor = application()?.editor;
+    let mut explorer = FileExplorer::new(root, &editor)?;
+    let area = Rect::new(0, 0, 80, 12);
+    explorer.layout(area, 40);
+    for expanded in [false, true] {
+        if expanded {
+            for index in 0..explorer.entries.len() {
+                if explorer.entries[index].is_dir {
+                    explorer.expand(index, &editor)?;
+                }
+            }
+        }
+        let mut surface = Surface::empty(area);
+        explorer.render(&mut surface, &editor);
+        assert_eq!(surface.get(0, 0).unwrap().symbol.as_str(), "\u{f0c83}");
+        for (name, icon) in [
+            ("src", if expanded { "\u{f0d0a}" } else { "\u{f0d09}" }),
+            ("Docs", if expanded { "\u{f0c83}" } else { "\u{f0c82}" }),
+            (
+                "node_modules",
+                if expanded { "\u{f0255}" } else { "\u{f0253}" },
+            ),
+            ("ordinary", if expanded { "\u{f0770}" } else { "\u{f024b}" }),
+            ("目录", if expanded { "\u{f0770}" } else { "\u{f024b}" }),
+            ("config", "\u{f0493}"),
+        ] {
+            let index = explorer
+                .entries
+                .iter()
+                .position(|entry| entry.name == name)
+                .unwrap();
+            assert_eq!(
+                surface.get(0, index as u16 + 1).unwrap().symbol.as_str(),
+                icon,
+                "icon for {name}, expanded={expanded}"
+            );
+        }
+    }
+    let mut config = (*editor.config()).clone();
+    config.file_explorer.icons = false;
+    editor.config = Arc::new(ArcSwap::from_pointee(config));
+    let mut surface = Surface::empty(area);
+    explorer.render(&mut surface, &editor);
+    assert!(surface.content.iter().all(|cell| !cell
+        .symbol
+        .chars()
+        .any(|ch| ('\u{f0000}'..='\u{ffffd}').contains(&ch))));
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn icon_theme_overlays_drive_sidebar_matching_and_fallbacks() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let root = directory.path().join("workspace");
+    std::fs::create_dir(&root)?;
+    let root = root.canonicalize()?;
+    for name in ["Docs", "local-unmapped-directory"] {
+        std::fs::create_dir(root.join(name))?;
+    }
+    for name in [
+        "Cargo.toml",
+        "main.rs",
+        "module.custom-rust",
+        "special.rs",
+        "specific.stories.tsx",
+        "component.stories.tsx",
+        "component.tsx",
+        "Dockerfile.prod",
+        ".bashrc",
+        "image.PNG",
+        "unknown.blob",
+    ] {
+        std::fs::write(root.join(name), "contents\n")?;
+    }
+    let path = directory.path().join("icons.toml");
+    std::fs::write(
+        &path,
+        r#"
+[file_icons]
+rust = "R"
+special = "S"
+[file_stems]
+"CARGO.TOML" = "special"
+"special.rs" = "special"
+"specific.stories.tsx" = "rust"
+[file_suffixes]
+"stories.tsx" = "special"
+[language_icons]
+bash = "special"
+rust = "special"
+[named_directory_icons.docs]
+collapsed = "special"
+[named_directory_icons.local-unmapped-directory]
+collapsed = "rust"
+"#,
+    )?;
+    let mut editor = application()?.editor;
+    let mut config = (*editor.config()).clone();
+    config.file_explorer.hidden = false;
+    editor.config = Arc::new(ArcSwap::from_pointee(config));
+    let mut languages = helix_loader::config::default_lang_config();
+    let rust = languages["language"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|language| language["name"].as_str() == Some("rust"))
+        .unwrap();
+    rust["file-types"]
+        .as_array_mut()
+        .unwrap()
+        .push("custom-rust".into());
+    editor
+        .syn_loader
+        .store(Arc::new(helix_core::syntax::Loader::new(
+            languages.try_into()?,
+        )?));
+    let mut explorer = FileExplorer::new(root, &editor)?;
+    explorer.icons = file_icons::IconTheme::load(&path);
+    let area = Rect::new(0, 0, 80, 20);
+    explorer.layout(area, 40);
+    for expanded in [false, true] {
+        if expanded {
+            for index in 0..explorer.entries.len() {
+                if explorer.entries[index].is_dir {
+                    explorer.expand(index, &editor)?;
+                }
+            }
+            // Refresh retains the loaded theme and expanded directories.
+            explorer.refresh(&editor)?;
+        }
+        let mut surface = Surface::empty(area);
+        explorer.render(&mut surface, &editor);
+        for (name, icon) in [
+            ("Cargo.toml", "S"),
+            ("main.rs", "R"),
+            ("module.custom-rust", "S"),
+            ("special.rs", "S"),
+            ("specific.stories.tsx", "R"),
+            ("component.stories.tsx", "S"),
+            ("component.tsx", "\u{f0708}"),
+            ("Dockerfile.prod", "\u{f0868}"),
+            (".bashrc", "\u{f018d}"),
+            ("image.PNG", "\u{f02e9}"),
+            ("unknown.blob", "\u{f0224}"),
+            ("Docs", if expanded { "\u{f0c83}" } else { "S" }),
+            (
+                "local-unmapped-directory",
+                if expanded { "\u{f0770}" } else { "R" },
+            ),
+        ] {
+            let index = explorer
+                .entries
+                .iter()
+                .position(|entry| entry.name == name)
+                .unwrap();
+            assert_eq!(
+                surface.get(0, index as u16 + 1).unwrap().symbol.as_str(),
+                icon,
+                "icon for {name}, expanded={expanded}"
+            );
+        }
+    }
+
+    // Reject the entire overlay rather than leaving a partially applied theme.
+    for invalid in [
+        "[file_icons]\nrust = 'R'\n[file_stems]\nbroken = 'missing'",
+        "[file_icons]\nrust = 'two columns'",
+        "[file_icons]\nrust = \"\\t\"",
+        "[file_stems]\nFILE = 'rust'\nfile = 'rust'",
+        "[unknown_table]\nkey = 'rust'",
+        "this is not TOML",
+    ] {
+        std::fs::write(&path, invalid)?;
+        explorer.icons = file_icons::IconTheme::load(&path);
+        let mut surface = Surface::empty(area);
+        explorer.render(&mut surface, &editor);
+        let index = explorer
+            .entries
+            .iter()
+            .position(|entry| entry.name == "main.rs")
+            .unwrap();
+        assert_eq!(
+            surface.get(0, index as u16 + 1).unwrap().symbol.as_str(),
+            "\u{f1617}",
+            "invalid overlay: {invalid}"
+        );
+    }
+    std::fs::remove_file(&path)?;
+    explorer.icons = file_icons::IconTheme::load(&path);
+    let mut surface = Surface::empty(area);
+    explorer.render(&mut surface, &editor);
+    let index = explorer
+        .entries
+        .iter()
+        .position(|entry| entry.name == "Cargo.toml")
+        .unwrap();
+    assert_eq!(
+        surface.get(0, index as u16 + 1).unwrap().symbol.as_str(),
+        "\u{f0493}"
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn upstream_icon_associations_render_in_the_sidebar() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let root = directory.path().canonicalize()?;
+    for name in [".cargo", ".storybook"] {
+        std::fs::create_dir(root.join(name))?;
+    }
+    for name in [
+        "eslint.config.js",
+        "webpack.config.js",
+        "vite.config.ts",
+        "astro.config.mjs",
+        "widget.stories.tsx",
+        "widget.test.ts",
+    ] {
+        std::fs::write(root.join(name), "contents\n")?;
+    }
+    let mut editor = application()?.editor;
+    let mut config = (*editor.config()).clone();
+    config.file_explorer.hidden = false;
+    editor.config = Arc::new(ArcSwap::from_pointee(config));
+    let mut explorer = FileExplorer::new(root, &editor)?;
+    explorer.icons = file_icons::IconTheme::load(&directory.path().join("no-overlay.toml"));
+    let area = Rect::new(0, 0, 80, 15);
+    explorer.layout(area, 40);
+    for expanded in [false, true] {
+        if expanded {
+            for index in 0..explorer.entries.len() {
+                if explorer.entries[index].is_dir {
+                    explorer.expand(index, &editor)?;
+                }
+            }
+        }
+        let mut surface = Surface::empty(area);
+        explorer.render(&mut surface, &editor);
+        for (name, icon) in [
+            ("eslint.config.js", "\u{f0c7a}"),
+            ("webpack.config.js", "\u{f072b}"),
+            ("vite.config.ts", "\u{f1064}"),
+            // An unsupported upstream SVG still keeps its association and uses the generic glyph.
+            ("astro.config.mjs", "\u{f0224}"),
+            ("widget.stories.tsx", "\u{f05da}"),
+            ("widget.test.ts", "\u{f0668}"),
+            (".cargo", if expanded { "\u{f0d0a}" } else { "\u{f0d09}" }),
+            (
+                ".storybook",
+                if expanded { "\u{f0b9f}" } else { "\u{f069d}" },
+            ),
+        ] {
+            let index = explorer
+                .entries
+                .iter()
+                .position(|entry| entry.name == name)
+                .unwrap();
+            assert_eq!(
+                surface.get(0, index as u16 + 1).unwrap().symbol.as_str(),
+                icon,
+                "icon for {name}, expanded={expanded}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn mouse_scrolling_preserves_selection_and_keyboard_reveals_it() -> anyhow::Result<()> {
     use helix_view::input::{KeyModifiers, MouseEvent};
 
@@ -543,18 +821,18 @@ async fn git_status_badges_and_directory_summaries() -> anyhow::Result<()> {
 
     let rows = render(&mut explorer);
     for (name, icon) in [
-        ("changed", "\u{f07c}"),
-        ("moved", "\u{f07b}"),
-        ("main.rs", "\u{e7a8}"),
-        ("文件.rs", "\u{e7a8}"),
-        ("flake.nix", "\u{f313}"),
-        ("Cargo.toml", "\u{e7a8}"),
-        ("Dockerfile", "\u{e7b0}"),
-        ("README.md", "\u{e73e}"),
-        ("widget.tsx", "\u{e7ba}"),
-        ("image.PNG", "\u{f1c5}"),
-        ("archive.tar", "\u{f1c6}"),
-        ("unknown.blob", "\u{f016}"),
+        ("changed", "\u{f0770}"),
+        ("moved", "\u{f024b}"),
+        ("main.rs", "\u{f1617}"),
+        ("文件.rs", "\u{f1617}"),
+        ("flake.nix", "\u{f1105}"),
+        ("Cargo.toml", "\u{f0493}"),
+        ("Dockerfile", "\u{f0868}"),
+        ("README.md", "\u{f0354}"),
+        ("widget.tsx", "\u{f0708}"),
+        ("image.PNG", "\u{f02e9}"),
+        ("archive.tar", "\u{f003c}"),
+        ("unknown.blob", "\u{f0224}"),
     ] {
         let (row, _) = rows
             .iter()
@@ -664,7 +942,7 @@ async fn git_status_badges_and_directory_summaries() -> anyhow::Result<()> {
                 .unwrap()
                 .symbol
                 .chars()
-                .any(|ch| ('\u{e000}'..='\u{f8ff}').contains(&ch)));
+                .any(|ch| ('\u{f0000}'..='\u{ffffd}').contains(&ch)));
         }
         assert_eq!(surface.get(38, y).unwrap().symbol.as_str(), " ");
     }

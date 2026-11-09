@@ -21,6 +21,7 @@ mod test {
     mod commands;
     mod file_explorer;
     mod file_watcher;
+    mod folding;
     mod git;
     mod inline_hunk;
     mod movement;

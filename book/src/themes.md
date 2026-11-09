@@ -323,6 +323,8 @@ These scopes are used for theming the editor interface:
 | `ui.debug.active`                 | Indicator for the line at which debugging execution is paused at, found in the gutter          |
 | `ui.gutter`                       | Gutter                                                                                         |
 | `ui.gutter.selected`              | Gutter for the line the cursor is on                                                           |
+| `ui.gutter.fold`                  | Fold chevrons (defaults to `ui.text`, rendered bold)                                             |
+| `ui.gutter.fold.selected`         | Fold chevrons on lines with a cursor (defaults to `ui.gutter.fold`)                              |
 | `ui.linenr`                       | Line numbers                                                                                   |
 | `ui.linenr.selected`              | Line number for the line the cursor is on                                                      |
 | `ui.statusline`                   | Statusline                                                                                     |

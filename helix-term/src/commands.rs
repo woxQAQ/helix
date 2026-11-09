@@ -367,6 +367,10 @@ impl MappableCommand {
         page_cursor_half_up, "Move page and cursor half up",
         page_cursor_half_down, "Move page and cursor half down",
         select_all, "Select whole document",
+        fold, "Fold selections or the current syntax node",
+        unfold, "Open folds at the cursors",
+        toggle_fold, "Toggle folds at the cursors",
+        unfold_all, "Open all folds in this view",
         select_regex, "Select all regex matches inside selections",
         split_selection, "Split selections on regex matches",
         split_selection_on_newline, "Split selection on newlines",
@@ -752,6 +756,64 @@ fn move_impl(cx: &mut Context, move_fn: MoveFn, dir: Direction, behaviour: Movem
 }
 
 use helix_core::movement::{move_horizontally, move_vertically};
+
+fn fold(cx: &mut Context) {
+    let (view, doc) = current!(cx.editor);
+    let text = doc.text().slice(..);
+    let ranges: Vec<_> = doc
+        .selection(view.id)
+        .iter()
+        .filter_map(|range| {
+            let first = text.char_to_line(range.from());
+            let last = text.char_to_line(range.to().saturating_sub(1).max(range.from()));
+            if first < last {
+                return Some((first, last));
+            }
+            doc.syntax_fold_range(range.cursor(text))
+        })
+        .collect();
+    if ranges.is_empty() {
+        cx.editor
+            .set_status("No multiline selection or syntax node to fold");
+        return;
+    }
+    for (first, last) in ranges {
+        doc.fold(view.id, first, last);
+    }
+}
+
+fn unfold(cx: &mut Context) {
+    let (view, doc) = current!(cx.editor);
+    let cursors: Vec<_> = doc
+        .selection(view.id)
+        .iter()
+        .map(|range| range.cursor(doc.text().slice(..)))
+        .collect();
+    for cursor in cursors {
+        doc.unfold(view.id, cursor);
+    }
+}
+
+fn toggle_fold(cx: &mut Context) {
+    let (view, doc) = current!(cx.editor);
+    let has_fold = doc.selection(view.id).iter().any(|range| {
+        let cursor = range.cursor(doc.text().slice(..));
+        doc.folds(view.id).iter().any(|fold| {
+            fold.start <= cursor && cursor <= fold.end
+                || doc.text().char_to_line(fold.start) == doc.text().char_to_line(cursor)
+        })
+    });
+    if has_fold {
+        unfold(cx);
+    } else {
+        fold(cx);
+    }
+}
+
+fn unfold_all(cx: &mut Context) {
+    let (view, doc) = current!(cx.editor);
+    doc.unfold_all(view.id);
+}
 
 fn move_char_left(cx: &mut Context) {
     move_impl(cx, move_horizontally, Direction::Backward, Movement::Move)

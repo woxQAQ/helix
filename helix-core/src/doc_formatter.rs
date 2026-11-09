@@ -171,6 +171,7 @@ impl Default for TextFormat {
 
 #[derive(Debug)]
 pub struct DocumentFormatter<'t> {
+    text: RopeSlice<'t>,
     text_fmt: &'t TextFormat,
     annotations: &'t TextAnnotations<'t>,
 
@@ -214,9 +215,16 @@ impl<'t> DocumentFormatter<'t> {
         // TODO divide long lines into blocks to avoid bad performance for long lines
         let block_line_idx = text.char_to_line(char_idx.min(text.len_chars()));
         let block_char_idx = text.line_to_char(block_line_idx);
+        let block_char_idx = annotations
+            .fold_at(block_char_idx)
+            .map_or(block_char_idx, |fold| {
+                text.line_to_char(text.char_to_line(fold.start))
+            });
+        let block_line_idx = text.char_to_line(block_char_idx);
         annotations.reset_pos(block_char_idx);
 
         DocumentFormatter {
+            text,
             text_fmt,
             annotations,
             visual_pos: Position { row: 0, col: 0 },
@@ -262,6 +270,20 @@ impl<'t> DocumentFormatter<'t> {
         let (grapheme, source) =
             if let Some((grapheme, highlight)) = self.next_inline_annotation_grapheme(char_pos) {
                 (grapheme.into(), GraphemeSource::VirtualText { highlight })
+            } else if let Some(fold) = self
+                .annotations
+                .fold_at(char_pos)
+                .filter(|_| char_pos < self.text.len_chars())
+            {
+                let end = fold.end.min(self.text.len_chars());
+                self.graphemes = self.text.slice(end..).graphemes();
+                self.annotations.reset_pos(end);
+                (
+                    "…".into(),
+                    GraphemeSource::Document {
+                        codepoints: (end - char_pos) as u32,
+                    },
+                )
             } else if let Some(grapheme) = self.graphemes.next() {
                 let codepoints = grapheme.len_chars() as u32;
 
@@ -457,6 +479,9 @@ impl<'t> Iterator for DocumentFormatter<'t> {
         };
 
         self.char_pos += grapheme.doc_chars();
+        if grapheme.doc_chars() > 1 && grapheme.raw != Grapheme::Newline {
+            self.line_pos = self.text.char_to_line(self.char_pos);
+        }
         if !grapheme.is_virtual() {
             self.annotations.process_virtual_text_anchors(&grapheme);
         }

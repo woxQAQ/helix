@@ -225,6 +225,22 @@ impl View {
         &self.gutters.layout
     }
 
+    /// Screen column reserved for fold chevrons in the line-number gutter.
+    pub fn fold_toggle_column(&self, doc: &Document) -> Option<u16> {
+        if self.gutter_offset(doc) == 0 {
+            return None;
+        }
+        let mut column = self.area.x;
+        for gutter in self.gutters() {
+            let width = gutter.width(self, doc) as u16;
+            if *gutter == GutterType::LineNumbers {
+                return Some(column + width - 1);
+            }
+            column += width;
+        }
+        None
+    }
+
     pub fn gutter_offset(&self, doc: &Document) -> u16 {
         let total_width = self
             .gutters
@@ -379,10 +395,14 @@ impl View {
     pub fn estimate_last_doc_line(&self, doc: &Document) -> usize {
         let doc_text = doc.text().slice(..);
         let line = doc_text.char_to_line(doc.view_offset(self.id).anchor.min(doc_text.len_chars()));
-        // Saturating subs to make it inclusive zero indexing.
-        (line + self.inner_height())
-            .min(doc_text.len_lines())
-            .saturating_sub(1)
+        let mut last = line + self.inner_height();
+        for fold in doc.folds(self.id) {
+            let first = doc_text.char_to_line(fold.start);
+            if first >= line && first <= last {
+                last += doc_text.char_to_line(fold.end) - first;
+            }
+        }
+        last.min(doc_text.len_lines()).saturating_sub(1)
     }
 
     /// Calculates the last non-empty visual line on screen
@@ -468,6 +488,7 @@ impl View {
         theme: Option<&Theme>,
     ) -> TextAnnotations<'a> {
         let mut text_annotations = TextAnnotations::default();
+        text_annotations.set_folds(doc.folds(self.id));
         if let Some(hunk) = self.inline_hunk(doc) {
             text_annotations.add_line_annotation(hunk.line_annotation());
         }
@@ -728,8 +749,8 @@ mod tests {
     use arc_swap::ArcSwap;
     use helix_core::{syntax, Rope};
 
-    // 1 diagnostic + 1 spacer + 3 linenr (< 1000 lines) + 1 spacer + 1 diff
-    const DEFAULT_GUTTER_OFFSET: u16 = 7;
+    // 1 diagnostic + 1 spacer + 3 linenr + 1 gap + 1 fold chevron + 1 spacer + 1 diff
+    const DEFAULT_GUTTER_OFFSET: u16 = 9;
 
     // 1 diagnostics + 1 spacer + 1 gutter
     const DEFAULT_GUTTER_OFFSET_ONLY_DIAGNOSTICS: u16 = 3;

@@ -163,8 +163,13 @@ impl EditorView {
             decorations.add_decoration(line_decoration);
         }
 
-        let syntax_highlighter =
-            Self::doc_syntax_highlighter(doc, view_offset.anchor, inner.height, &loader);
+        let syntax_highlighter = Self::doc_syntax_highlighter(
+            doc,
+            view_offset.anchor,
+            inner.height,
+            &text_annotations,
+            &loader,
+        );
         let mut overlays = Vec::new();
 
         overlays.push(Self::overlay_syntax_highlights(
@@ -179,9 +184,14 @@ impl EditorView {
             .and_then(|config| config.rainbow_brackets)
             .unwrap_or(config.rainbow_brackets)
         {
-            if let Some(overlay) =
-                Self::doc_rainbow_highlights(doc, view_offset.anchor, inner.height, theme, &loader)
-            {
+            if let Some(overlay) = Self::doc_rainbow_highlights(
+                doc,
+                view_offset.anchor,
+                inner.height,
+                &text_annotations,
+                theme,
+                &loader,
+            ) {
                 overlays.push(overlay);
             }
         }
@@ -339,12 +349,24 @@ impl EditorView {
         text: helix_core::RopeSlice,
         row: usize,
         height: u16,
+        annotations: &TextAnnotations,
     ) -> std::ops::Range<usize> {
-        // Calculate viewport byte ranges:
-        // Saturating subs to make it inclusive zero indexing.
+        // Hidden document lines do not consume viewport rows. Soft wrapping and
+        // virtual lines can only shorten this conservative document range.
         let last_line = text.len_lines().saturating_sub(1);
-        let last_visible_line = (row + height as usize).saturating_sub(1).min(last_line);
-        let start = text.line_to_byte(row.min(last_line));
+        let anchor = text.line_to_char(row.min(last_line));
+        let row = annotations
+            .fold_at(anchor)
+            .map_or(row.min(last_line), |fold| text.char_to_line(fold.start));
+        let mut last_visible_line = (row + height as usize).saturating_sub(1);
+        for fold in annotations.folds() {
+            let first = text.char_to_line(fold.start);
+            if first >= row && first <= last_visible_line {
+                last_visible_line += text.char_to_line(fold.end) - first;
+            }
+        }
+        let last_visible_line = last_visible_line.min(last_line);
+        let start = text.line_to_byte(row);
         let end = text.line_to_byte(last_visible_line + 1);
 
         start..end
@@ -357,12 +379,13 @@ impl EditorView {
         doc: &'editor Document,
         anchor: usize,
         height: u16,
+        annotations: &TextAnnotations,
         loader: &'editor syntax::Loader,
     ) -> Option<syntax::Highlighter<'editor>> {
         let syntax = doc.syntax()?;
         let text = doc.text().slice(..);
         let row = text.char_to_line(anchor.min(text.len_chars()));
-        let range = Self::viewport_byte_range(text, row, height);
+        let range = Self::viewport_byte_range(text, row, height, annotations);
         let range = range.start as u32..range.end as u32;
 
         let highlighter = syntax.highlighter(text, loader, range);
@@ -378,7 +401,7 @@ impl EditorView {
         let text = doc.text().slice(..);
         let row = text.char_to_line(anchor.min(text.len_chars()));
 
-        let mut range = Self::viewport_byte_range(text, row, height);
+        let mut range = Self::viewport_byte_range(text, row, height, text_annotations);
         range = text.byte_to_char(range.start)..text.byte_to_char(range.end);
 
         text_annotations.collect_overlay_highlights(range)
@@ -388,13 +411,14 @@ impl EditorView {
         doc: &Document,
         anchor: usize,
         height: u16,
+        annotations: &TextAnnotations,
         theme: &Theme,
         loader: &syntax::Loader,
     ) -> Option<OverlayHighlights> {
         let syntax = doc.syntax()?;
         let text = doc.text().slice(..);
         let row = text.char_to_line(anchor.min(text.len_chars()));
-        let visible_range = Self::viewport_byte_range(text, row, height);
+        let visible_range = Self::viewport_byte_range(text, row, height, annotations);
         let start = syntax::child_for_byte_range(
             &syntax.tree().root_node(),
             visible_range.start as u32..visible_range.end as u32,
@@ -796,8 +820,17 @@ impl EditorView {
         let gutter_selected_style = theme.get("ui.gutter.selected");
         let gutter_style_virtual = theme.get("ui.gutter.virtual");
         let gutter_selected_style_virtual = theme.get("ui.gutter.selected.virtual");
+        let fold_style = theme
+            .try_get_exact("ui.gutter.fold")
+            .unwrap_or_else(|| theme.get("ui.text"))
+            .add_modifier(Modifier::BOLD);
+        let fold_selected_style = theme
+            .try_get_exact("ui.gutter.fold.selected")
+            .unwrap_or(fold_style)
+            .add_modifier(Modifier::BOLD);
 
         for gutter_type in view.gutters() {
+            let has_fold_column = *gutter_type == helix_view::editor::GutterType::LineNumbers;
             let mut gutter = gutter_type.style(editor, doc, view, theme, is_focused);
             let width = gutter_type.width(view, doc);
             // avoid lots of small allocations by reusing a text buffer for each line
@@ -820,6 +853,17 @@ impl EditorView {
                     gutter(pos.doc_line, selected, pos.first_visual_line, &mut text)
                 {
                     renderer.set_stringn(x, y, &text, width, gutter_style.patch(style));
+                    if has_fold_column && matches!(text.chars().last(), Some('▶' | '▼')) {
+                        let style = if selected && is_focused {
+                            fold_selected_style
+                        } else {
+                            fold_style
+                        };
+                        renderer.set_style(
+                            Rect::new(x + width as u16 - 1, y, 1, 1),
+                            gutter_style.patch(style),
+                        );
+                    }
                 } else {
                     renderer.set_style(
                         Rect {
@@ -1356,6 +1400,24 @@ impl EditorView {
                     editor.focus(view_id);
 
                     let (view, doc) = current!(cxt.editor);
+
+                    if view.fold_toggle_column(doc) == Some(column) {
+                        if let Some(char_idx) =
+                            view.pos_at_visual_coords(doc, coords.row as u16, 0, true)
+                        {
+                            let line = doc.text().char_to_line(char_idx);
+                            let start = doc.text().line_to_char(line);
+                            let first_visual_line = view
+                                .screen_coords_at_pos(doc, doc.text().slice(..), start)
+                                .is_some_and(|position| position.row == coords.row);
+                            if first_visual_line && !doc.unfold(view.id, start) {
+                                if let Some((first, last)) = doc.fold_range_at_line(line) {
+                                    doc.fold(view.id, first, last);
+                                }
+                            }
+                        }
+                        return EventResult::Consumed(None);
+                    }
 
                     let Some(path) = doc.path().map(ToOwned::to_owned) else {
                         return EventResult::Ignored(None);

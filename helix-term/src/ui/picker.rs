@@ -934,6 +934,7 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
                 }
             };
 
+            let annotations = TextAnnotations::default();
             let mut offset = ViewPosition::default();
             if let Some((start_line, end_line)) = range {
                 let height = end_line - start_line;
@@ -942,7 +943,6 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
                 let middle = text.line_to_char(start_line + height / 2);
                 if height < inner.height as usize {
                     let text_fmt = doc.text_format(inner.width, None);
-                    let annotations = TextAnnotations::default();
                     (offset.anchor, offset.vertical_offset) = char_idx_at_visual_offset(
                         text,
                         middle,
@@ -964,8 +964,13 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
             let loader = cx.editor.syn_loader.load();
             let config = cx.editor.config();
 
-            let syntax_highlighter =
-                EditorView::doc_syntax_highlighter(doc, offset.anchor, area.height, &loader);
+            let syntax_highlighter = EditorView::doc_syntax_highlighter(
+                doc,
+                offset.anchor,
+                area.height,
+                &annotations,
+                &loader,
+            );
             let mut overlay_highlights = Vec::new();
             if doc
                 .language_config()
@@ -976,6 +981,7 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
                     doc,
                     offset.anchor,
                     area.height,
+                    &annotations,
                     &cx.editor.theme,
                     &loader,
                 ) {
@@ -1017,7 +1023,7 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
                 doc,
                 offset,
                 // TODO: compute text annotations asynchronously here (like inlay hints)
-                &TextAnnotations::default(),
+                &annotations,
                 syntax_highlighter,
                 overlay_highlights,
                 &cx.editor.theme,

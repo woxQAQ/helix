@@ -149,6 +149,8 @@ pub struct Document {
     ///
     /// To know if they're up-to-date, check the `id` field in `DocumentInlayHints`.
     pub(crate) inlay_hints: HashMap<ViewId, DocumentInlayHints>,
+    /// Concealed character ranges for each view, sorted and non-overlapping.
+    pub(crate) folds: HashMap<ViewId, Vec<std::ops::Range<usize>>>,
     /// Jump label overlays for each view.
     pub(crate) jump_labels: HashMap<ViewId, Vec<Overlay>>,
     /// LSP document highlights for each view, stored as char ranges.
@@ -768,6 +770,7 @@ impl Document {
             version_control_head: None,
             focused_at: std::time::Instant::now(),
             readonly: false,
+            folds: HashMap::new(),
             jump_labels: HashMap::new(),
             document_highlights: HashMap::new(),
             code_action_hints: HashSet::new(),
@@ -1425,8 +1428,16 @@ impl Document {
     /// Select text within the [`Document`].
     pub fn set_selection(&mut self, view_id: ViewId, selection: Selection) {
         // TODO: use a transaction?
-        self.selections
-            .insert(view_id, selection.ensure_invariants(self.text().slice(..)));
+        let selection = selection.ensure_invariants(self.text().slice(..));
+        if let Some(folds) = self.folds.get_mut(&view_id) {
+            folds.retain(|fold| {
+                !selection.iter().any(|range| {
+                    let cursor = range.cursor(self.text.slice(..));
+                    fold.start < cursor && cursor < fold.end
+                })
+            });
+        }
+        self.selections.insert(view_id, selection);
         helix_event::dispatch(SelectionDidChange {
             doc: self,
             view: view_id,
@@ -1471,6 +1482,7 @@ impl Document {
         self.selections.remove(&view_id);
         self.view_data.remove(&view_id);
         self.inlay_hints.remove(&view_id);
+        self.folds.remove(&view_id);
         self.jump_labels.remove(&view_id);
         self.document_highlights.remove(&view_id);
         self.document_highlight_controllers.remove(&view_id);
@@ -1495,16 +1507,18 @@ impl Document {
 
         if changes.is_empty() {
             if let Some(selection) = transaction.selection() {
-                self.selections.insert(
-                    view_id,
-                    selection.clone().ensure_invariants(self.text.slice(..)),
-                );
-                helix_event::dispatch(SelectionDidChange {
-                    doc: self,
-                    view: view_id,
-                });
+                self.set_selection(view_id, selection.clone());
             }
             return true;
+        }
+
+        for folds in self.folds.values_mut() {
+            folds.retain_mut(|fold| {
+                fold.start = changes.map_pos(fold.start, Assoc::After);
+                fold.end = changes.map_pos(fold.end, Assoc::Before);
+                fold.start < fold.end
+                    && self.text.char_to_line(fold.start) < self.text.char_to_line(fold.end)
+            });
         }
 
         self.modified_since_accessed = true;
@@ -1659,14 +1673,19 @@ impl Document {
 
         // if specified, the current selection should instead be replaced by transaction.selection
         if let Some(selection) = transaction.selection() {
-            self.selections.insert(
-                view_id,
-                selection.clone().ensure_invariants(self.text.slice(..)),
-            );
-            helix_event::dispatch(SelectionDidChange {
-                doc: self,
-                view: view_id,
-            });
+            self.set_selection(view_id, selection.clone());
+        }
+        // Mapped selections can enter a fold after an edit in another view.
+        let text = self.text.slice(..);
+        for (view, folds) in &mut self.folds {
+            if let Some(selection) = self.selections.get(view) {
+                folds.retain(|fold| {
+                    !selection.iter().any(|range| {
+                        let cursor = range.cursor(text);
+                        fold.start < cursor && cursor < fold.end
+                    })
+                });
+            }
         }
 
         true
@@ -2452,6 +2471,81 @@ impl Document {
     /// Set the inlay hints for this document and `view_id`.
     pub fn set_inlay_hints(&mut self, view_id: ViewId, inlay_hints: DocumentInlayHints) {
         self.inlay_hints.insert(view_id, inlay_hints);
+    }
+
+    /// The smallest enclosing multiline syntax node at a character position.
+    pub fn syntax_fold_range(&self, cursor: usize) -> Option<(usize, usize)> {
+        let text = self.text.slice(..);
+        let byte = text.char_to_byte(cursor) as u32;
+        let tree = self.syntax()?.tree_for_byte_range(byte, byte);
+        let mut node = tree.root_node().descendant_for_byte_range(byte, byte)?;
+        loop {
+            let start = text.byte_to_char(node.start_byte() as usize);
+            let end = text.byte_to_char(node.end_byte() as usize);
+            let first = text.char_to_line(start);
+            let last = text.char_to_line(end.saturating_sub(1).max(start));
+            if first < last {
+                return Some((first, last));
+            }
+            node = node.parent()?;
+        }
+    }
+
+    /// A foldable syntax node starting on this document line.
+    pub fn fold_range_at_line(&self, line: usize) -> Option<(usize, usize)> {
+        let start = self.text.line_to_char(line);
+        let column = self
+            .text
+            .line(line)
+            .chars()
+            .position(|ch| !ch.is_whitespace())?;
+        self.syntax_fold_range(start + column)
+            .filter(|(first, _)| *first == line)
+    }
+
+    /// Closed folds in this view, in document order.
+    pub fn folds(&self, view_id: ViewId) -> &[std::ops::Range<usize>] {
+        self.folds.get(&view_id).map_or(&[], Vec::as_slice)
+    }
+
+    /// Conceal the lines following the first line through the last selected line.
+    pub fn fold(&mut self, view_id: ViewId, first_line: usize, last_line: usize) {
+        let text = self.text.slice(..);
+        if first_line >= last_line || last_line >= text.len_lines() {
+            return;
+        }
+        let start = helix_core::line_ending::line_end_char_index(&text, first_line);
+        let end = helix_core::line_ending::line_end_char_index(&text, last_line);
+        let folds = self.folds.entry(view_id).or_default();
+        folds.retain(|fold| fold.end <= start || end <= fold.start);
+        let index = folds.partition_point(|fold| fold.start < start);
+        folds.insert(index, start..end);
+        let selection = self.selection(view_id).clone().transform(|range| {
+            if start < range.cursor(text) && range.cursor(text) <= end {
+                Range::point(text.line_to_char(first_line))
+            } else {
+                range
+            }
+        });
+        self.set_selection(view_id, selection);
+    }
+
+    /// Open the fold containing the cursor or starting on the cursor's line.
+    pub fn unfold(&mut self, view_id: ViewId, cursor: usize) -> bool {
+        let text = self.text.slice(..);
+        let line = text.char_to_line(cursor);
+        let Some(folds) = self.folds.get_mut(&view_id) else {
+            return false;
+        };
+        let before = folds.len();
+        folds.retain(|fold| {
+            !(fold.start <= cursor && cursor <= fold.end || text.char_to_line(fold.start) == line)
+        });
+        before != folds.len()
+    }
+
+    pub fn unfold_all(&mut self, view_id: ViewId) {
+        self.folds.remove(&view_id);
     }
 
     pub fn set_jump_labels(&mut self, view_id: ViewId, labels: Vec<Overlay>) {

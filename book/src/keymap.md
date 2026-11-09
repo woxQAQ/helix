@@ -196,6 +196,10 @@ useful when you're simply looking over text and not actively editing it.
 
 | Key                  | Description                                               | Command                 |
 | -----                | -----------                                               | -------                 |
+| `f`                  | Fold selected lines or the current multiline syntax node | `fold`                  |
+| `a`                  | Toggle a fold at the cursor                              | `toggle_fold`           |
+| `o`                  | Open a fold at the cursor                                | `unfold`                |
+| `R`                  | Open all folds in the current view                       | `unfold_all`            |
 | `z`, `c`             | Vertically center the line                                | `align_view_center`     |
 | `t`                  | Align the line to the top of the screen                   | `align_view_top`        |
 | `b`                  | Align the line to the bottom of the screen                | `align_view_bottom`     |
@@ -206,6 +210,13 @@ useful when you're simply looking over text and not actively editing it.
 | `Ctrl-b`, `PageUp`   | Move page up                                              | `page_up`               |
 | `Ctrl-u`             | Move cursor and page half page up                         | `page_cursor_half_up`   |
 | `Ctrl-d`             | Move cursor and page half page down                       | `page_cursor_half_down` |
+
+Folding keeps the first line visible and replaces hidden lines with `…`.
+The line-number gutter shows `▼` on foldable syntax nodes and `▶` on closed folds;
+click the chevron to fold or unfold. With a single-line selection, the smallest
+enclosing multiline Tree-sitter node is folded instead. Folds belong to the
+current view; searching or jumping into hidden text opens the containing fold.
+Use a multiline selection to fold text in buffers without a syntax tree.
 
 #### Goto mode
 

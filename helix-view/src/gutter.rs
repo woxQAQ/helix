@@ -150,6 +150,7 @@ pub fn line_numbers<'doc>(
 ) -> GutterFn<'doc> {
     let text = doc.text().slice(..);
     let width = line_numbers_width(view, doc);
+    let view_id = view.id;
 
     let last_line_in_view = view.estimate_last_doc_line(doc);
 
@@ -170,7 +171,7 @@ pub fn line_numbers<'doc>(
     Box::new(
         move |line: usize, selected: bool, first_visual_line: bool, out: &mut String| {
             if line == last_line_in_view && !draw_last {
-                write!(out, "{:>1$}", '~', width).unwrap();
+                write!(out, "{:>1$} ", '~', width - 1).unwrap();
                 Some(linenr)
             } else {
                 use crate::{document::Mode, editor::LineNumber};
@@ -193,7 +194,18 @@ pub fn line_numbers<'doc>(
                 };
 
                 if first_visual_line {
-                    write!(out, "{:>1$}", display_num, width).unwrap();
+                    write!(out, "{:>1$} ", display_num, width - 2).unwrap();
+                    let closed = doc
+                        .folds(view_id)
+                        .iter()
+                        .any(|fold| text.char_to_line(fold.start) == line);
+                    out.push(if closed {
+                        '▶'
+                    } else if doc.fold_range_at_line(line).is_some() {
+                        '▼'
+                    } else {
+                        ' '
+                    });
                 } else {
                     write!(out, "{:>1$}", " ", width).unwrap();
                 }
@@ -208,7 +220,8 @@ pub fn line_numbers<'doc>(
 ///
 /// The width of the gutter depends on the number of lines in the document,
 /// whether there is content on the last line (the `~` line), and the
-/// `editor.gutters.line-numbers.min-width` settings.
+/// `editor.gutters.line-numbers.min-width` settings. Two additional cells are
+/// reserved for a gap and fold chevrons.
 fn line_numbers_width(view: &View, doc: &Document) -> usize {
     let text = doc.text();
     let last_line = text.len_lines().saturating_sub(1);
@@ -216,7 +229,7 @@ fn line_numbers_width(view: &View, doc: &Document) -> usize {
     let last_drawn = if draw_last { last_line + 1 } else { last_line };
     let digits = count_digits(last_drawn);
     let n_min = view.gutters.line_numbers.min_width;
-    digits.max(n_min)
+    digits.max(n_min) + 2
 }
 
 pub fn padding<'doc>(
@@ -379,7 +392,7 @@ mod tests {
         assert_eq!(view.gutters.layout.len(), 5);
         assert_eq!(view.gutters.layout[0].width(&view, &doc), 1);
         assert_eq!(view.gutters.layout[1].width(&view, &doc), 1);
-        assert_eq!(view.gutters.layout[2].width(&view, &doc), 3);
+        assert_eq!(view.gutters.layout[2].width(&view, &doc), 5);
         assert_eq!(view.gutters.layout[3].width(&view, &doc), 1);
         assert_eq!(view.gutters.layout[4].width(&view, &doc), 1);
     }
@@ -423,7 +436,7 @@ mod tests {
 
         assert_eq!(view.gutters.layout.len(), 2);
         assert_eq!(view.gutters.layout[0].width(&view, &doc), 1);
-        assert_eq!(view.gutters.layout[1].width(&view, &doc), 10);
+        assert_eq!(view.gutters.layout[1].width(&view, &doc), 12);
     }
 
     #[test]
@@ -453,7 +466,7 @@ mod tests {
         );
 
         assert_eq!(view.gutters.layout.len(), 2);
-        assert_eq!(view.gutters.layout[1].width(&view, &doc_short), 1);
-        assert_eq!(view.gutters.layout[1].width(&view, &doc_long), 2);
+        assert_eq!(view.gutters.layout[1].width(&view, &doc_short), 3);
+        assert_eq!(view.gutters.layout[1].width(&view, &doc_long), 4);
     }
 }

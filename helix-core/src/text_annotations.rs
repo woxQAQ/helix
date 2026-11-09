@@ -276,6 +276,8 @@ impl<T: ?Sized> Drop for RawBox<T> {
 /// Also commonly called virtual text.
 #[derive(Default)]
 pub struct TextAnnotations<'a> {
+    /// Sorted, non-overlapping character ranges displayed as a single ellipsis.
+    folds: &'a [Range<usize>],
     inline_annotations: Vec<Layer<'a, InlineAnnotation, Option<Highlight>>>,
     overlays: Vec<Layer<'a, Overlay, Option<Highlight>>>,
     line_annotations: Vec<(Cell<usize>, RawBox<dyn LineAnnotation + 'a>)>,
@@ -291,6 +293,22 @@ impl Debug for TextAnnotations<'_> {
 }
 
 impl<'a> TextAnnotations<'a> {
+    /// Set sorted, non-overlapping concealed ranges, aligned to grapheme boundaries.
+    pub fn set_folds(&mut self, folds: &'a [Range<usize>]) {
+        self.folds = folds;
+    }
+
+    pub fn folds(&self) -> &[Range<usize>] {
+        self.folds
+    }
+
+    pub fn fold_at(&self, char_idx: usize) -> Option<&Range<usize>> {
+        let index = self.folds.partition_point(|fold| fold.end <= char_idx);
+        self.folds
+            .get(index)
+            .filter(|fold| fold.contains(&char_idx))
+    }
+
     /// Prepare the TextAnnotations for iteration starting at char_idx
     pub fn reset_pos(&self, char_idx: usize) {
         reset_pos(&self.inline_annotations, char_idx, |annot| annot.char_idx);

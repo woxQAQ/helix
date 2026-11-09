@@ -38,14 +38,35 @@ pub fn move_horizontally(
     count: usize,
     behaviour: Movement,
     _: &TextFormat,
-    _: &mut TextAnnotations,
+    annotations: &mut TextAnnotations,
 ) -> Range {
     let pos = range.cursor(slice);
 
     // Compute the new position.
-    let new_pos = match dir {
-        Direction::Forward => nth_next_grapheme_boundary(slice, pos, count),
-        Direction::Backward => nth_prev_grapheme_boundary(slice, pos, count),
+    let new_pos = if annotations.folds().is_empty() {
+        match dir {
+            Direction::Forward => nth_next_grapheme_boundary(slice, pos, count),
+            Direction::Backward => nth_prev_grapheme_boundary(slice, pos, count),
+        }
+    } else {
+        let mut pos = pos;
+        for _ in 0..count {
+            let next = match dir {
+                Direction::Forward => annotations.fold_at(pos).map_or_else(
+                    || nth_next_grapheme_boundary(slice, pos, 1),
+                    |fold| fold.end,
+                ),
+                Direction::Backward => {
+                    let next = nth_prev_grapheme_boundary(slice, pos, 1);
+                    annotations.fold_at(next).map_or(next, |fold| fold.start)
+                }
+            };
+            if next == pos {
+                break;
+            }
+            pos = next;
+        }
+        pos
     };
 
     // Compute the final new range.
@@ -92,6 +113,9 @@ pub fn move_vertically_visual(
     if dir == Direction::Forward {
         new_pos += (virtual_rows != 0) as usize;
     }
+    if let Some(fold) = annotations.folds().iter().find(|fold| fold.end == new_pos) {
+        new_pos = fold.start;
+    }
 
     // Special-case to avoid moving to the end of the last non-empty line.
     if behaviour == Movement::Extend && slice.line(slice.char_to_line(new_pos)).len_chars() == 0 {
@@ -114,6 +138,11 @@ pub fn move_vertically(
 ) -> Range {
     annotations.clear_line_annotations();
     let pos = range.cursor(slice);
+    let pos = annotations
+        .folds()
+        .iter()
+        .find(|fold| fold.end == pos)
+        .map_or(pos, |fold| fold.start);
     let line_idx = slice.char_to_line(pos);
     let line_start = slice.line_to_char(line_idx);
 
@@ -130,6 +159,27 @@ pub fn move_vertically(
         Direction::Forward => line_idx.saturating_add(count),
         Direction::Backward => line_idx.saturating_sub(count),
     };
+
+    match dir {
+        Direction::Forward => {
+            for fold in annotations.folds() {
+                let first = slice.char_to_line(fold.start);
+                if first >= line_idx && first < new_line_idx {
+                    new_line_idx =
+                        new_line_idx.saturating_add(slice.char_to_line(fold.end) - first);
+                }
+            }
+        }
+        Direction::Backward => {
+            for fold in annotations.folds().iter().rev() {
+                let last = slice.char_to_line(fold.end);
+                if last < line_idx && last >= new_line_idx {
+                    new_line_idx =
+                        new_line_idx.saturating_sub(last - slice.char_to_line(fold.start));
+                }
+            }
+        }
+    }
 
     let line = if new_line_idx >= slice.len_lines() - 1 {
         // there is no line terminator for the last line

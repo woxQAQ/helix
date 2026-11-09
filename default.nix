@@ -17,7 +17,8 @@
     ./screenshot.png
     ./book
     ./docs
-    ./runtime
+    # The built-in icon theme is embedded in the binary at compile time.
+    (fs.difference ./runtime ./runtime/icons.toml)
     ./flake.lock
     (fs.fileFilter (file: lib.strings.hasInfix ".git" file.name) ./.)
     (fs.fileFilter (file: file.hasExt "svg") ./.)

@@ -116,6 +116,7 @@ pub(super) struct FileExplorer {
     selected: usize,
     offset: usize,
     reveal_selection: bool,
+    current_path: Option<PathBuf>,
     area: Rect,
     git_status: Arc<ArcSwap<HashMap<PathBuf, GitStatuses>>>,
     unignored: HashMap<PathBuf, HashSet<PathBuf>>,
@@ -143,28 +144,41 @@ impl FileExplorer {
             selected: 0,
             offset: 0,
             reveal_selection: true,
+            current_path: None,
             area: Rect::default(),
             git_status: Arc::new(ArcSwap::from_pointee(HashMap::new())),
             unignored,
             focused: true,
         };
-        if let Some(path) = helix_view::doc!(editor).path() {
-            // Reveal only the ancestors of the current file; other directories remain lazy.
-            let mut index = 0;
-            while index < explorer.entries.len() {
-                let entry = &explorer.entries[index];
-                if entry.path == path {
-                    explorer.selected = index;
-                    break;
-                }
-                if entry.is_dir && path.starts_with(&entry.path) {
-                    explorer.expand(index, editor)?;
-                }
-                index += 1;
-            }
-        }
+        explorer.sync_current_file(editor)?;
         explorer.refresh_git_status(editor);
         Ok(explorer)
+    }
+
+    fn sync_current_file(&mut self, editor: &Editor) -> io::Result<()> {
+        let path = helix_view::doc!(editor).path();
+        if self.current_path.as_deref() == path {
+            return Ok(());
+        }
+        self.current_path = path.map(Path::to_path_buf);
+        let Some(path) = path else {
+            return Ok(());
+        };
+        // Reveal only the ancestors of the current file; other directories remain lazy.
+        let mut index = 0;
+        while index < self.entries.len() {
+            let entry = &self.entries[index];
+            if entry.path == path {
+                self.selected = index;
+                self.reveal_selection = true;
+                break;
+            }
+            if entry.is_dir && path.starts_with(&entry.path) {
+                self.expand(index, editor)?;
+            }
+            index += 1;
+        }
+        Ok(())
     }
 
     fn refresh_git_status(&mut self, editor: &Editor) {
@@ -298,6 +312,7 @@ impl FileExplorer {
             selected: self.selected,
             offset: self.offset,
             reveal_selection: self.reveal_selection,
+            current_path: self.current_path.clone(),
             area: self.area,
             git_status: self.git_status.clone(),
             unignored,
@@ -638,6 +653,9 @@ impl FileExplorer {
     }
 
     pub fn render(&mut self, surface: &mut Surface, editor: &Editor) {
+        if let Err(err) = self.sync_current_file(editor) {
+            log::warn!("Failed to reveal current file in explorer: {err}");
+        }
         let area = self.area;
         if area.width == 0 {
             return;

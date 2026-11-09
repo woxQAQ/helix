@@ -598,6 +598,60 @@ async fn sidebar_directory_rename_updates_open_descendants() -> anyhow::Result<(
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn sidebar_follows_active_buffer() -> anyhow::Result<()> {
+    let directory = tempfile::Builder::new()
+        .prefix("sidebar-follow-test-")
+        .tempdir_in(helix_loader::find_workspace().0)?;
+    let first = directory.path().join("first.txt");
+    let nested = directory.path().join("nested");
+    std::fs::create_dir(&nested)?;
+    let child = nested.join("child.txt");
+    std::fs::write(&first, "first\n")?;
+    std::fs::write(&child, "child\n")?;
+    let mut config = helpers::test_config();
+    config.editor.file_explorer.flatten_dirs = false;
+    let mut app = helpers::AppBuilder::new()
+        .with_config(config)
+        .with_file(&first, None)
+        .build()?;
+    app.editor.open(&child, helix_view::editor::Action::Load)?;
+
+    test_key_sequences(
+        &mut app,
+        vec![
+            (Some("<space>e<esc>:buffer-next<ret>"), None),
+            (
+                Some("<space>E<ret>"),
+                Some(&|app| {
+                    assert_eq!(current_ref!(app.editor).1.path(), Some(child.as_path()));
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            (Some(":buffer-previous<ret>"), None),
+            (
+                Some("<space>E<ret>"),
+                Some(&|app| {
+                    assert_eq!(current_ref!(app.editor).1.path(), Some(first.as_path()));
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            // Browsing the tree survives redraws while the active buffer stays the same.
+            (Some("<space>Ek<esc>"), None),
+            (
+                Some("<space>E<ret>"),
+                Some(&|app| {
+                    assert_eq!(current_ref!(app.editor).1.path(), Some(child.as_path()));
+                    helpers::assert_status_not_error(&app.editor);
+                }),
+            ),
+            (Some(":qa!<ret>"), None),
+        ],
+        true,
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn sidebar_mouse_and_terminal_resize() -> anyhow::Result<()> {
     use arc_swap::ArcSwap;
     use helix_term::{
@@ -675,5 +729,30 @@ async fn sidebar_mouse_and_terminal_resize() -> anyhow::Result<()> {
     compositor.render(area, &mut surface, &mut cx);
     assert_eq!(cx.editor.tree.views().next().unwrap().0.area.x, 30);
     assert_eq!(surface.get(29, selected_row).unwrap().symbol.as_str(), "│");
+
+    let second = directory.path().join("second.txt");
+    std::fs::write(&second, "second\n")?;
+    cx.editor.open(&second, helix_view::editor::Action::Load)?;
+    // Refresh the tree after adding a file, then switch through the rendered tab.
+    for key in parse_macro("<space>ER<esc>")? {
+        compositor.handle_event(&Event::Key(key), &mut cx);
+        compositor.render(area, &mut surface, &mut cx);
+    }
+    compositor.handle_event(
+        &Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 30 + " first.txt[+] ".len() as u16 + 1,
+            row: 0,
+            modifiers: KeyModifiers::empty(),
+        }),
+        &mut cx,
+    );
+    compositor.render(area, &mut surface, &mut cx);
+    assert_eq!(helix_view::doc!(cx.editor).path(), Some(second.as_path()));
+    for key in parse_macro("<space>E<ret>")? {
+        compositor.handle_event(&Event::Key(key), &mut cx);
+        compositor.render(area, &mut surface, &mut cx);
+    }
+    assert_eq!(helix_view::doc!(cx.editor).path(), Some(second.as_path()));
     Ok(())
 }

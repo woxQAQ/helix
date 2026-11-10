@@ -131,6 +131,12 @@ pub(super) enum Outcome {
     Delete(PathBuf),
     Rename(PathBuf),
     Create(PathBuf),
+    CreateDirectory(PathBuf),
+    ContextMenu {
+        position: helix_core::Position,
+        path: PathBuf,
+        is_dir: bool,
+    },
 }
 
 impl FileExplorer {
@@ -153,6 +159,11 @@ impl FileExplorer {
         explorer.sync_current_file(editor)?;
         explorer.refresh_git_status(editor);
         Ok(explorer)
+    }
+
+    pub(super) fn reveal_current_file(&mut self, editor: &Editor) -> io::Result<()> {
+        self.current_path = None;
+        self.sync_current_file(editor)
     }
 
     fn sync_current_file(&mut self, editor: &Editor) -> io::Result<()> {
@@ -442,21 +453,32 @@ impl FileExplorer {
                     .map_err(anyhow::Error::from)
             }
         } else {
-            match crate::file_is_binary(&entry.path) {
-                Ok(true) => return Outcome::OpenExternal(entry.path.clone()),
-                Err(err) => {
-                    editor.set_error(format!("File explorer: {err}"));
-                    return Outcome::Consumed;
-                }
-                Ok(false) => {}
-            }
-            editor
-                .open(&entry.path, action)
-                .map(|_| self.focused = false)
-                .map_err(Into::into)
+            let path = entry.path.clone();
+            return self.open_path(&path, editor, action);
         };
         if let Err(err) = result {
             editor.set_error(format!("File explorer: {err}"));
+        }
+        Outcome::Consumed
+    }
+
+    pub(super) fn open_path(
+        &mut self,
+        path: &Path,
+        editor: &mut Editor,
+        action: Action,
+    ) -> Outcome {
+        match crate::file_is_binary(path) {
+            Ok(true) => return Outcome::OpenExternal(path.to_path_buf()),
+            Err(err) => {
+                editor.set_error(format!("File explorer: {err}"));
+                return Outcome::Consumed;
+            }
+            Ok(false) => {}
+        }
+        match editor.open(path, action) {
+            Ok(_) => self.focused = false,
+            Err(err) => editor.set_error(format!("File explorer: {err}")),
         }
         Outcome::Consumed
     }
@@ -483,7 +505,10 @@ impl FileExplorer {
                     || mouse.row < self.area.y
                     || mouse.row >= self.area.bottom()
                 {
-                    if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                    if matches!(
+                        mouse.kind,
+                        MouseEventKind::Down(MouseButton::Left | MouseButton::Right)
+                    ) {
                         self.focused = false;
                     }
                     return Outcome::Ignored;
@@ -498,6 +523,28 @@ impl FileExplorer {
                     _ => {}
                 }
                 match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Right) => {
+                        self.focused = true;
+                        let entry = mouse.row.checked_sub(self.area.y + 1).and_then(|row| {
+                            let index = self.offset + usize::from(row);
+                            self.entries.get(index).map(|entry| (index, entry))
+                        });
+                        let (path, is_dir) = if let Some((index, entry)) = entry {
+                            self.selected = index;
+                            self.reveal_selection = true;
+                            (entry.path.clone(), entry.is_dir)
+                        } else {
+                            (self.root.clone(), true)
+                        };
+                        return Outcome::ContextMenu {
+                            position: helix_core::Position::new(
+                                mouse.row.into(),
+                                mouse.column.into(),
+                            ),
+                            path,
+                            is_dir,
+                        };
+                    }
                     MouseEventKind::Down(MouseButton::Left) => {
                         self.focused = true;
                         if mouse.row > self.area.y && mouse.column < self.area.right() - 1 {

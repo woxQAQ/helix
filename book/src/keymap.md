@@ -361,6 +361,23 @@ Enter a name within the same directory; existing names are never overwritten.
 Open buffers follow the new path, including files inside a renamed directory.
 Press `R` to refresh the sidebar manually.
 
+With mouse support enabled, right-click a sidebar entry to open its context
+menu. Files offer opening, split opening, renaming, deletion, and copying the
+absolute path to the clipboard. Directories offer file and directory creation,
+renaming, deletion, and copying the path. Right-clicking the sidebar header or
+empty space targets the root directory; its menu omits renaming and deletion.
+Creation, renaming, and deletion use the same prompts as the keyboard commands.
+
+Right-click a bufferline tab to save or close that buffer, close the other
+buffers, reveal its file in the explorer, or copy its absolute path. Opening the
+menu does not switch buffers. Closing buffers preserves the usual protection
+against losing unsaved changes. Reveal and copy are available for buffers with
+file paths.
+
+Click a menu item, or use `Up`/`Down` (or `k`/`j`) and `Enter`. Press `Esc` or
+click outside the menu to dismiss it. An outside click only dismisses the menu.
+Menus close on terminal resize or loss of focus.
+
 > 💡 Global search displays results in a fuzzy picker, use `Space + '` to bring it back up after opening a file.
 
 ##### Git

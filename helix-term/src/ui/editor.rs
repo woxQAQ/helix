@@ -6,6 +6,7 @@ use crate::{
     key,
     keymap::{KeymapResult, Keymaps},
     ui::{
+        context_menu::{ContextMenu, MenuItem},
         document::{render_document, LinePos, TextRenderer},
         file_explorer::{FileExplorer, Outcome},
         statusline,
@@ -49,6 +50,22 @@ pub struct EditorView {
     file_explorer: Option<FileExplorer>,
     bufferline_area: Rect,
     bufferline_tabs: Vec<(Rect, DocumentId)>,
+}
+
+enum ExplorerMenuAction {
+    Open(Action),
+    Create { directory: bool },
+    Rename,
+    Delete,
+    CopyPath,
+}
+
+enum BufferMenuAction {
+    Save,
+    Close,
+    CloseOthers,
+    Reveal,
+    CopyPath,
 }
 
 #[derive(Debug, Clone)]
@@ -1341,13 +1358,26 @@ impl EditorView {
         if (self.bufferline_area.y..self.bufferline_area.bottom()).contains(&row)
             && (self.bufferline_area.x..self.bufferline_area.right()).contains(&column)
         {
-            if kind == MouseEventKind::Down(MouseButton::Left) {
+            if matches!(
+                kind,
+                MouseEventKind::Down(MouseButton::Left | MouseButton::Right)
+            ) {
                 if let Some(&(_, doc)) = self
                     .bufferline_tabs
                     .iter()
                     .find(|(area, _)| (area.x..area.right()).contains(&column))
                 {
                     self.clear_completion(cxt.editor);
+                    if kind == MouseEventKind::Down(MouseButton::Right) {
+                        let menu = Self::buffer_context_menu(
+                            Position::new(row.into(), column.into()),
+                            doc,
+                            cxt.editor,
+                        );
+                        return EventResult::Consumed(Some(Box::new(move |compositor, _| {
+                            compositor.replace_or_push(ContextMenu::ID, menu);
+                        })));
+                    }
                     if view!(cxt.editor).doc != doc {
                         cxt.editor.switch(doc, Action::Replace);
                     }
@@ -1603,6 +1633,368 @@ impl EditorView {
     }
 }
 
+impl EditorView {
+    fn explorer_context_menu(
+        &self,
+        position: Position,
+        path: PathBuf,
+        is_dir: bool,
+    ) -> ContextMenu {
+        let mut actions = if is_dir {
+            vec![
+                ("New file", ExplorerMenuAction::Create { directory: false }),
+                (
+                    "New directory",
+                    ExplorerMenuAction::Create { directory: true },
+                ),
+                ("Rename", ExplorerMenuAction::Rename),
+                ("Delete", ExplorerMenuAction::Delete),
+                ("Copy path", ExplorerMenuAction::CopyPath),
+            ]
+        } else {
+            vec![
+                ("Open", ExplorerMenuAction::Open(Action::Replace)),
+                (
+                    "Open in horizontal split",
+                    ExplorerMenuAction::Open(Action::HorizontalSplit),
+                ),
+                (
+                    "Open in vertical split",
+                    ExplorerMenuAction::Open(Action::VerticalSplit),
+                ),
+                ("Rename", ExplorerMenuAction::Rename),
+                ("Delete", ExplorerMenuAction::Delete),
+                ("Copy path", ExplorerMenuAction::CopyPath),
+            ]
+        };
+        if self.file_explorer_root() == Some(path.as_path()) {
+            actions.retain(|(_, action)| {
+                !matches!(
+                    action,
+                    ExplorerMenuAction::Rename | ExplorerMenuAction::Delete
+                )
+            });
+        }
+        let items = actions
+            .into_iter()
+            .map(|(label, action)| {
+                let path = path.clone();
+                MenuItem::new(
+                    label,
+                    Box::new(move |compositor, context| {
+                        let Some(view) = compositor.find::<EditorView>() else {
+                            return;
+                        };
+                        let outcome = match action {
+                            ExplorerMenuAction::Open(action) => {
+                                let Some(explorer) = &mut view.file_explorer else {
+                                    return;
+                                };
+                                explorer.open_path(&path, context.editor, action)
+                            }
+                            ExplorerMenuAction::Create { directory: true } => {
+                                Outcome::CreateDirectory(path)
+                            }
+                            ExplorerMenuAction::Create { directory: false } => {
+                                Outcome::Create(path)
+                            }
+                            ExplorerMenuAction::Rename => Outcome::Rename(path),
+                            ExplorerMenuAction::Delete => Outcome::Delete(path),
+                            ExplorerMenuAction::CopyPath => {
+                                Self::copy_path(&path, context.editor);
+                                return;
+                            }
+                        };
+                        let mut cx = commands::Context {
+                            editor: context.editor,
+                            count: None,
+                            register: None,
+                            callback: Vec::new(),
+                            on_next_key_callback: None,
+                            jobs: context.jobs,
+                        };
+                        let result = view.handle_explorer_outcome(outcome, &mut cx);
+                        if let EventResult::Consumed(Some(callback)) = result {
+                            callback(compositor, context);
+                        }
+                    }),
+                )
+            })
+            .collect();
+        ContextMenu::new(position, items)
+    }
+
+    fn buffer_context_menu(position: Position, doc: DocumentId, editor: &Editor) -> ContextMenu {
+        let mut actions = vec![
+            ("Save", BufferMenuAction::Save),
+            ("Close", BufferMenuAction::Close),
+            ("Close other buffers", BufferMenuAction::CloseOthers),
+        ];
+        if editor.document(doc).is_some_and(|doc| doc.path().is_some()) {
+            actions.extend([
+                ("Reveal in file explorer", BufferMenuAction::Reveal),
+                ("Copy path", BufferMenuAction::CopyPath),
+            ]);
+        }
+        let items = actions
+            .into_iter()
+            .map(|(label, action)| {
+                MenuItem::new(
+                    label,
+                    Box::new(move |compositor, cx| {
+                        if !cx.editor.documents.contains_key(&doc) {
+                            cx.editor.set_error("Buffer is no longer open");
+                            return;
+                        }
+                        let result = match action {
+                            BufferMenuAction::Save => {
+                                cx.editor.switch(doc, Action::Replace);
+                                commands::typed::write_impl(
+                                    cx,
+                                    None,
+                                    commands::WriteOptions {
+                                        force: false,
+                                        auto_format: true,
+                                        code_actions: true,
+                                    },
+                                )
+                            }
+                            BufferMenuAction::Close => {
+                                commands::typed::buffer_close_by_ids_impl(cx, &[doc], false)
+                            }
+                            BufferMenuAction::CloseOthers => {
+                                let ids: Vec<_> = cx
+                                    .editor
+                                    .documents()
+                                    .map(Document::id)
+                                    .filter(|&id| id != doc)
+                                    .collect();
+                                commands::typed::buffer_close_by_ids_impl(cx, &ids, false)
+                            }
+                            BufferMenuAction::Reveal => {
+                                cx.editor.switch(doc, Action::Replace);
+                                if let Some(view) = compositor.find::<EditorView>() {
+                                    view.reveal_file_in_explorer(cx.editor)
+                                } else {
+                                    Ok(())
+                                }
+                            }
+                            BufferMenuAction::CopyPath => {
+                                if let Some(path) = cx
+                                    .editor
+                                    .document(doc)
+                                    .and_then(Document::path)
+                                    .map(ToOwned::to_owned)
+                                {
+                                    Self::copy_path(&path, cx.editor);
+                                }
+                                Ok(())
+                            }
+                        };
+                        if let Err(err) = result {
+                            cx.editor.set_error(err.to_string());
+                        }
+                    }),
+                )
+            })
+            .collect();
+        ContextMenu::new(position, items)
+    }
+
+    fn copy_path(path: &std::path::Path, editor: &mut Editor) {
+        match editor
+            .registers
+            .write('+', vec![path.to_string_lossy().into_owned()])
+        {
+            Ok(()) => editor.set_status("Copied path to clipboard"),
+            Err(err) => editor.set_error(err.to_string()),
+        }
+    }
+
+    fn reveal_file_in_explorer(&mut self, editor: &Editor) -> anyhow::Result<()> {
+        let Some(path) = helix_view::doc!(editor).path() else {
+            return Ok(());
+        };
+        if !self
+            .file_explorer
+            .as_ref()
+            .is_some_and(|explorer| path.starts_with(explorer.root()))
+        {
+            let workspace = helix_loader::find_workspace().0;
+            let root = if path.starts_with(&workspace) {
+                workspace
+            } else {
+                path.parent().unwrap_or(path).to_path_buf()
+            };
+            self.file_explorer = Some(FileExplorer::new(root, editor)?);
+        }
+        if let Some(explorer) = &mut self.file_explorer {
+            explorer.focused = true;
+            explorer.reveal_current_file(editor)?;
+        }
+        Ok(())
+    }
+
+    fn handle_explorer_outcome(
+        &mut self,
+        outcome: Outcome,
+        mut cx: &mut commands::Context,
+    ) -> EventResult {
+        if let Outcome::ContextMenu {
+            position,
+            path,
+            is_dir,
+        } = &outcome
+        {
+            let menu = self.explorer_context_menu(*position, path.clone(), *is_dir);
+            cx.callback.push(Box::new(move |compositor, _| {
+                compositor.replace_or_push(ContextMenu::ID, menu);
+            }));
+        }
+        if let Outcome::OpenExternal(path) = &outcome {
+            cx.jobs.callback(crate::open_external_file_callback(path));
+        }
+        if let Outcome::Delete(path) = &outcome {
+            let path = path.clone();
+            super::prompt(
+                &mut cx,
+                format!("Permanently delete {}? [y/N] ", path.display()).into(),
+                None,
+                |_, _| Vec::new(),
+                move |cx, input, event| {
+                    if event != super::PromptEvent::Validate || !matches!(input.trim(), "y" | "yes")
+                    {
+                        return;
+                    }
+                    let result = std::fs::symlink_metadata(&path).and_then(|metadata| {
+                        if metadata.is_dir() {
+                            std::fs::remove_dir_all(&path)
+                        } else {
+                            std::fs::remove_file(&path)
+                        }
+                    });
+                    if let Err(err) = result {
+                        cx.editor.set_error(format!(
+                            "File explorer: failed to delete {}: {err}",
+                            path.display()
+                        ));
+                        return;
+                    }
+                    crate::job::dispatch_blocking(|editor, compositor| {
+                        if let Some(view) = compositor.find::<EditorView>() {
+                            view.refresh_file_explorer(editor);
+                        }
+                    });
+                },
+            );
+        }
+        if let Outcome::Create(parent) | Outcome::CreateDirectory(parent) = &outcome {
+            let directory = matches!(outcome, Outcome::CreateDirectory(_));
+            let parent = parent.clone();
+            super::prompt(
+                &mut cx,
+                format!(
+                    "Create {} in {}{}: ",
+                    if directory { "directory" } else { "file" },
+                    parent.display(),
+                    if directory {
+                        ""
+                    } else {
+                        " (trailing / for directory)"
+                    },
+                )
+                .into(),
+                None,
+                |_, _| Vec::new(),
+                move |_, input, event| {
+                    if event != super::PromptEvent::Validate || input.is_empty() {
+                        return;
+                    }
+                    let parent = parent.clone();
+                    let name = if directory {
+                        format!("{}/", input.trim_end_matches('/'))
+                    } else {
+                        input.to_owned()
+                    };
+                    crate::job::dispatch_blocking(move |editor, compositor| {
+                        match FileExplorer::create_path(&parent, &name) {
+                            Ok(path) => {
+                                if let Some(explorer) = compositor
+                                    .find::<EditorView>()
+                                    .and_then(|view| view.file_explorer.as_mut())
+                                {
+                                    if let Err(err) = explorer.refresh_after_create(&path, editor) {
+                                        editor.set_error(format!("File explorer: {err}"));
+                                    }
+                                }
+                            }
+                            Err(err) => editor.set_error(format!(
+                                "File explorer: failed to create in {}: {err}",
+                                parent.display()
+                            )),
+                        }
+                    });
+                },
+            );
+        }
+        if let Outcome::Rename(path) = &outcome {
+            let path = path.clone();
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            super::prompt_with_input(
+                &mut cx,
+                format!("Rename {} to: ", path.display()).into(),
+                name,
+                None,
+                |_, _| Vec::new(),
+                move |_, input, event| {
+                    if event != super::PromptEvent::Validate || input.is_empty() {
+                        return;
+                    }
+                    let old_path = path.clone();
+                    let name = input.to_owned();
+                    crate::job::dispatch_blocking(move |editor, compositor| {
+                        match FileExplorer::rename_path(&old_path, &name, editor) {
+                            Ok(new_path) => {
+                                if let Some(explorer) = compositor
+                                    .find::<EditorView>()
+                                    .and_then(|view| view.file_explorer.as_mut())
+                                {
+                                    if let Err(err) =
+                                        explorer.refresh_after_rename(&old_path, &new_path, editor)
+                                    {
+                                        editor.set_error(format!("File explorer: {err}"));
+                                    }
+                                }
+                            }
+                            Err(err) => editor.set_error(format!(
+                                "File explorer: failed to rename {}: {err}",
+                                old_path.display()
+                            )),
+                        }
+                    });
+                },
+            );
+        }
+        if matches!(outcome, Outcome::Close) {
+            self.file_explorer = None;
+        }
+        let callbacks = take(&mut cx.callback);
+        EventResult::Consumed(if callbacks.is_empty() {
+            None
+        } else {
+            Some(Box::new(move |compositor, context| {
+                for callback in callbacks {
+                    callback(compositor, context);
+                }
+            }))
+        })
+    }
+}
+
 impl Component for EditorView {
     fn handle_event(
         &mut self,
@@ -1625,153 +2017,13 @@ impl Component for EditorView {
             } else {
                 explorer.handle_event(event, cx.editor)
             };
-            if let Outcome::OpenExternal(path) = &outcome {
-                cx.jobs.callback(crate::open_external_file_callback(path));
-            }
-            if let Outcome::Delete(path) = &outcome {
-                let path = path.clone();
-                super::prompt(
-                    &mut cx,
-                    format!("Permanently delete {}? [y/N] ", path.display()).into(),
-                    None,
-                    |_, _| Vec::new(),
-                    move |cx, input, event| {
-                        if event != super::PromptEvent::Validate
-                            || !matches!(input.trim(), "y" | "yes")
-                        {
-                            return;
-                        }
-                        let result = std::fs::symlink_metadata(&path).and_then(|metadata| {
-                            if metadata.is_dir() {
-                                std::fs::remove_dir_all(&path)
-                            } else {
-                                std::fs::remove_file(&path)
-                            }
-                        });
-                        if let Err(err) = result {
-                            cx.editor.set_error(format!(
-                                "File explorer: failed to delete {}: {err}",
-                                path.display()
-                            ));
-                            return;
-                        }
-                        crate::job::dispatch_blocking(|editor, compositor| {
-                            if let Some(view) = compositor.find::<EditorView>() {
-                                view.refresh_file_explorer(editor);
-                            }
-                        });
-                    },
-                );
-            }
-            if let Outcome::Create(parent) = &outcome {
-                let parent = parent.clone();
-                super::prompt(
-                    &mut cx,
-                    format!(
-                        "Create in {} (trailing / for directory): ",
-                        parent.display()
-                    )
-                    .into(),
-                    None,
-                    |_, _| Vec::new(),
-                    move |_, input, event| {
-                        if event != super::PromptEvent::Validate || input.is_empty() {
-                            return;
-                        }
-                        let parent = parent.clone();
-                        let name = input.to_owned();
-                        crate::job::dispatch_blocking(move |editor, compositor| {
-                            match FileExplorer::create_path(&parent, &name) {
-                                Ok(path) => {
-                                    if let Some(explorer) = compositor
-                                        .find::<EditorView>()
-                                        .and_then(|view| view.file_explorer.as_mut())
-                                    {
-                                        if let Err(err) =
-                                            explorer.refresh_after_create(&path, editor)
-                                        {
-                                            editor.set_error(format!("File explorer: {err}"));
-                                        }
-                                    }
-                                }
-                                Err(err) => editor.set_error(format!(
-                                    "File explorer: failed to create in {}: {err}",
-                                    parent.display()
-                                )),
-                            }
-                        });
-                    },
-                );
-            }
-            if let Outcome::Rename(path) = &outcome {
-                let path = path.clone();
-                let name = path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned();
-                super::prompt_with_input(
-                    &mut cx,
-                    format!("Rename {} to: ", path.display()).into(),
-                    name,
-                    None,
-                    |_, _| Vec::new(),
-                    move |_, input, event| {
-                        if event != super::PromptEvent::Validate || input.is_empty() {
-                            return;
-                        }
-                        let old_path = path.clone();
-                        let name = input.to_owned();
-                        crate::job::dispatch_blocking(move |editor, compositor| {
-                            match FileExplorer::rename_path(&old_path, &name, editor) {
-                                Ok(new_path) => {
-                                    if let Some(explorer) = compositor
-                                        .find::<EditorView>()
-                                        .and_then(|view| view.file_explorer.as_mut())
-                                    {
-                                        if let Err(err) = explorer
-                                            .refresh_after_rename(&old_path, &new_path, editor)
-                                        {
-                                            editor.set_error(format!("File explorer: {err}"));
-                                        }
-                                    }
-                                }
-                                Err(err) => editor.set_error(format!(
-                                    "File explorer: failed to rename {}: {err}",
-                                    old_path.display()
-                                )),
-                            }
-                        });
-                    },
-                );
-            }
-            match outcome {
-                Outcome::Ignored => {}
-                Outcome::Consumed
-                | Outcome::Close
-                | Outcome::OpenExternal(_)
-                | Outcome::Delete(_)
-                | Outcome::Create(_)
-                | Outcome::Rename(_) => {
-                    if matches!(outcome, Outcome::Close) {
-                        self.file_explorer = None;
-                    }
-                    if matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::Down(_)))
-                    {
-                        self.handle_non_key_input(&mut cx);
-                        self.clear_completion(cx.editor);
-                    }
-                    let callbacks = cx.callback;
-                    return EventResult::Consumed(if callbacks.is_empty() {
-                        None
-                    } else {
-                        Some(Box::new(move |compositor, context| {
-                            for callback in callbacks {
-                                callback(compositor, context);
-                            }
-                        }))
-                    });
+            if !matches!(outcome, Outcome::Ignored) {
+                if matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::Down(_)))
+                {
+                    self.handle_non_key_input(&mut cx);
+                    self.clear_completion(cx.editor);
                 }
+                return self.handle_explorer_outcome(outcome, &mut cx);
             }
         }
 

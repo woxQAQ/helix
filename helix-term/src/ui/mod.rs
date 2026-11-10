@@ -1,4 +1,5 @@
 mod completion;
+mod context_menu;
 mod document;
 pub(crate) mod editor;
 mod file_explorer;

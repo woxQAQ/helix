@@ -19,6 +19,7 @@ mod test {
     mod bufferline;
     mod command_line;
     mod commands;
+    mod context_menu;
     mod file_explorer;
     mod file_watcher;
     mod folding;

@@ -176,7 +176,7 @@ fn open_impl(cx: &mut compositor::Context, args: Args, action: Action) -> anyhow
     Ok(())
 }
 
-fn buffer_close_by_ids_impl(
+pub(crate) fn buffer_close_by_ids_impl(
     cx: &mut compositor::Context,
     doc_ids: &[DocumentId],
     force: bool,
@@ -377,7 +377,7 @@ fn buffer_previous(
     Ok(())
 }
 
-fn write_impl(
+pub(crate) fn write_impl(
     cx: &mut compositor::Context,
     path: Option<&str>,
     options: WriteOptions,

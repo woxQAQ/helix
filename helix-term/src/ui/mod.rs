@@ -17,6 +17,7 @@ mod select;
 mod spinner;
 mod statusline;
 pub mod terminal;
+mod terminal_panel;
 mod text;
 mod text_decorations;
 

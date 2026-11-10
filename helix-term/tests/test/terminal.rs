@@ -5,7 +5,7 @@ use std::time::Duration;
 use helix_term::{
     compositor::{Compositor, Context, Event},
     job::Jobs,
-    ui::terminal::FloatingTerminal,
+    ui::terminal::Terminal as FloatingTerminal,
 };
 use helix_view::{
     graphics::{Color, Rect},

@@ -378,6 +378,31 @@ Click a menu item, or use `Up`/`Down` (or `k`/`j`) and `Enter`. Press `Esc` or
 click outside the menu to dismiss it. An outside click only dismisses the menu.
 Menus close on terminal resize or loss of focus.
 
+Choose `Open terminal` from a directory's context menu to start the default
+shell in that directory. On a file or bufferline tab, the terminal starts in the
+file's parent directory. The default shell follows the platform's terminal
+settings (`SHELL` or the account's login shell on Unix).
+
+Use `:terminal` to create a new shell session in the bottom terminal panel. It
+starts in the current file's parent directory, or the current working directory
+for a scratch buffer. The editor remains above the panel; terminal sessions have
+their own tabs and do not appear in the file bufferline or file buffer picker.
+The current file's statusline stays below the terminal panel, with the command
+prompt and messages on the last row.
+
+Press `Ctrl-/` (`toggle_terminal`) to show or hide the panel, including in insert
+and select modes. The first press creates a shell if no sessions exist. Hiding
+the panel preserves its processes, output, working directories, and active
+session. `Ctrl-_` is also supported for terminals that use the legacy encoding.
+
+Click a file to edit while the panel remains open; click inside the terminal to
+send keyboard input and pasted text to the shell. Use the panel's session tabs
+to switch shells, `[+]` to create a session, `[×]` to close the active session,
+and `[−]` to hide the panel. Scroll over the header to switch sessions, or drag
+an unused part of the header to resize the panel. `Ctrl-g` or `exit` closes the
+active session; closing the last session hides the panel. `Esc` is sent to the
+shell. Lazygit continues to use a floating terminal.
+
 > 💡 Global search displays results in a fuzzy picker, use `Space + '` to bring it back up after opening a file.
 
 ##### Git

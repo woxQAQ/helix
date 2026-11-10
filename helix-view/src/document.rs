@@ -2473,7 +2473,7 @@ impl Document {
         self.inlay_hints.insert(view_id, inlay_hints);
     }
 
-    /// The smallest enclosing multiline syntax node at a character position.
+    /// The smallest enclosing multiline syntax construct, excluding file and statement lists.
     pub fn syntax_fold_range(&self, cursor: usize) -> Option<(usize, usize)> {
         let text = self.text.slice(..);
         let byte = text.char_to_byte(cursor) as u32;
@@ -2484,10 +2484,12 @@ impl Document {
             let end = text.byte_to_char(node.end_byte() as usize);
             let first = text.char_to_line(start);
             let last = text.char_to_line(end.saturating_sub(1).max(start));
-            if first < last {
+            let parent = node.parent();
+            // Statement lists group siblings; their first statement is not a fold header.
+            if first < last && parent.is_some() && node.kind() != "statement_list" {
                 return Some((first, last));
             }
-            node = node.parent()?;
+            node = parent?;
         }
     }
 

@@ -10,6 +10,8 @@ use crate::{
         document::{render_document, LinePos, TextRenderer},
         file_explorer::{FileExplorer, Outcome},
         statusline,
+        terminal::{self, Terminal, TerminalId},
+        terminal_panel::TerminalPanel,
         text_decorations::{self, Decoration, DecorationManager, InlineDiagnostics},
         Completion, ProgressSpinners,
     },
@@ -50,10 +52,13 @@ pub struct EditorView {
     file_explorer: Option<FileExplorer>,
     bufferline_area: Rect,
     bufferline_tabs: Vec<(Rect, DocumentId)>,
+    terminal_statusline: Rect,
+    terminal_panel: TerminalPanel,
 }
 
 enum ExplorerMenuAction {
     Open(Action),
+    OpenTerminal,
     Create { directory: bool },
     Rename,
     Delete,
@@ -62,6 +67,7 @@ enum ExplorerMenuAction {
 
 enum BufferMenuAction {
     Save,
+    OpenTerminal,
     Close,
     CloseOthers,
     Reveal,
@@ -80,6 +86,37 @@ pub enum InsertEvent {
 }
 
 impl EditorView {
+    pub(super) fn terminal_mut(&mut self, id: TerminalId) -> Option<&mut Terminal> {
+        self.terminal_panel.session_mut(id)
+    }
+
+    pub(super) fn remove_terminal(&mut self, id: TerminalId) {
+        self.terminal_panel.remove(id);
+    }
+
+    pub(super) fn open_terminal_panel(
+        &mut self,
+        directory: &std::path::Path,
+        area: Rect,
+        editor: &mut Editor,
+    ) -> anyhow::Result<()> {
+        self.terminal_panel.open(directory, area, editor)?;
+        self.clear_completion(editor);
+        if let Some(explorer) = &mut self.file_explorer {
+            explorer.focused = false;
+        }
+        Ok(())
+    }
+
+    pub fn toggle_terminal_panel(&mut self, area: Rect, editor: &mut Editor) -> anyhow::Result<()> {
+        self.terminal_panel.toggle(area, editor)?;
+        self.clear_completion(editor);
+        if let Some(explorer) = &mut self.file_explorer {
+            explorer.focused = false;
+        }
+        Ok(())
+    }
+
     pub fn new(keymaps: Keymaps) -> Self {
         Self {
             keymaps,
@@ -93,6 +130,8 @@ impl EditorView {
             file_explorer: None,
             bufferline_area: Rect::default(),
             bufferline_tabs: Vec::new(),
+            terminal_statusline: Rect::default(),
+            terminal_panel: TerminalPanel::default(),
         }
     }
 
@@ -1667,6 +1706,7 @@ impl EditorView {
                 ("Copy path", ExplorerMenuAction::CopyPath),
             ]
         };
+        actions.push(("Open terminal", ExplorerMenuAction::OpenTerminal));
         if self.file_explorer_root() == Some(path.as_path()) {
             actions.retain(|(_, action)| {
                 !matches!(
@@ -1682,15 +1722,24 @@ impl EditorView {
                 MenuItem::new(
                     label,
                     Box::new(move |compositor, context| {
-                        let Some(view) = compositor.find::<EditorView>() else {
-                            return;
-                        };
                         let outcome = match action {
                             ExplorerMenuAction::Open(action) => {
-                                let Some(explorer) = &mut view.file_explorer else {
+                                let Some(explorer) = compositor
+                                    .find::<EditorView>()
+                                    .and_then(|view| view.file_explorer.as_mut())
+                                else {
                                     return;
                                 };
                                 explorer.open_path(&path, context.editor, action)
+                            }
+                            ExplorerMenuAction::OpenTerminal => {
+                                let directory = if is_dir {
+                                    path.as_path()
+                                } else {
+                                    path.parent().unwrap_or(&path)
+                                };
+                                super::terminal::open_shell(directory, context.editor, compositor);
+                                return;
                             }
                             ExplorerMenuAction::Create { directory: true } => {
                                 Outcome::CreateDirectory(path)
@@ -1704,6 +1753,9 @@ impl EditorView {
                                 Self::copy_path(&path, context.editor);
                                 return;
                             }
+                        };
+                        let Some(view) = compositor.find::<EditorView>() else {
+                            return;
                         };
                         let mut cx = commands::Context {
                             editor: context.editor,
@@ -1734,6 +1786,7 @@ impl EditorView {
             actions.extend([
                 ("Reveal in file explorer", BufferMenuAction::Reveal),
                 ("Copy path", BufferMenuAction::CopyPath),
+                ("Open terminal", BufferMenuAction::OpenTerminal),
             ]);
         }
         let items = actions
@@ -1778,6 +1831,18 @@ impl EditorView {
                                 } else {
                                     Ok(())
                                 }
+                            }
+                            BufferMenuAction::OpenTerminal => {
+                                if let Some(directory) = cx
+                                    .editor
+                                    .document(doc)
+                                    .and_then(Document::path)
+                                    .and_then(std::path::Path::parent)
+                                    .map(ToOwned::to_owned)
+                                {
+                                    super::terminal::open_shell(&directory, cx.editor, compositor);
+                                }
+                                Ok(())
                             }
                             BufferMenuAction::CopyPath => {
                                 if let Some(path) = cx
@@ -2009,6 +2074,48 @@ impl Component for EditorView {
             on_next_key_callback: None,
             jobs: context.jobs,
         };
+        if matches!(event, Event::Mouse(mouse) if mouse.row == self.terminal_statusline.y
+            && self.terminal_statusline.height > 0
+            && mouse.column >= self.terminal_statusline.x
+            && mouse.column < self.terminal_statusline.right())
+        {
+            return EventResult::Consumed(None);
+        }
+        if matches!(event, Event::Key(key) if terminal::is_toggle_key(key))
+            && (self.terminal_panel.is_focused()
+                || self
+                    .file_explorer
+                    .as_ref()
+                    .is_some_and(|explorer| explorer.focused))
+        {
+            self.handle_non_key_input(&mut cx);
+            let area = cx.editor.tree.area();
+            if let Err(err) = self.toggle_terminal_panel(area, cx.editor) {
+                cx.editor.set_error(err.to_string());
+            }
+            return EventResult::Consumed(None);
+        }
+        let panel_result = {
+            let mut context = Context {
+                editor: cx.editor,
+                jobs: cx.jobs,
+                scroll: None,
+            };
+            self.terminal_panel.handle_event(event, &mut context)
+        };
+        if let EventResult::Consumed(_) = &panel_result {
+            if matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::Down(_)))
+            {
+                self.handle_non_key_input(&mut cx);
+                self.clear_completion(cx.editor);
+                if self.terminal_panel.is_focused() {
+                    if let Some(explorer) = &mut self.file_explorer {
+                        explorer.focused = false;
+                    }
+                }
+            }
+            return panel_result;
+        }
         if let Some(explorer) = &mut self.file_explorer {
             let outcome = if let Event::Key(key) = event {
                 let mut key = *key;
@@ -2206,7 +2313,7 @@ impl Component for EditorView {
         };
 
         // -1 for commandline and -1 for bufferline
-        let mut editor_area = document_area.clip_bottom(1);
+        let mut editor_area = self.terminal_panel.layout(document_area.clip_bottom(1));
         if use_bufferline {
             editor_area = editor_area.clip_top(1);
         }
@@ -2228,8 +2335,32 @@ impl Component for EditorView {
                 view,
                 document_area,
                 surface,
-                is_focused && !explorer_focused,
+                is_focused && !explorer_focused && !self.terminal_panel.is_focused(),
             );
+        }
+
+        self.terminal_panel.render(area, surface, cx);
+        self.terminal_statusline = if self.terminal_panel.is_visible() {
+            Rect::new(area.x, area.bottom() - 2, area.width, 1)
+        } else {
+            Rect::default()
+        };
+        if self.terminal_panel.is_visible() {
+            let style = cx.editor.theme.get(if explorer_focused {
+                "ui.statusline.inactive"
+            } else {
+                "ui.statusline"
+            });
+            surface.clear_with(self.terminal_statusline, style);
+            let (view, doc) = helix_view::current_ref!(cx.editor);
+            let mut context = statusline::RenderContext::new(
+                cx.editor,
+                doc,
+                view,
+                !explorer_focused,
+                &self.spinners,
+            );
+            statusline::render(&mut context, self.terminal_statusline, surface);
         }
 
         if config.auto_info {
@@ -2327,6 +2458,9 @@ impl Component for EditorView {
             .is_some_and(|explorer| explorer.focused)
         {
             return (None, CursorKind::Hidden);
+        }
+        if self.terminal_panel.is_focused() {
+            return self.terminal_panel.cursor(_area, editor);
         }
         match editor.cursor() {
             // all block cursors are drawn manually

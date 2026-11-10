@@ -2649,6 +2649,24 @@ fn pipe_impl(
     Ok(())
 }
 
+fn terminal(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event == PromptEvent::Validate {
+        let directory = doc!(cx.editor)
+            .path()
+            .and_then(Path::parent)
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(helix_stdx::env::current_working_dir);
+        cx.jobs.callback(async move {
+            Ok(job::Callback::EditorCompositor(Box::new(
+                move |editor, compositor| {
+                    ui::terminal::open_shell(&directory, editor, compositor);
+                },
+            )))
+        });
+    }
+    Ok(())
+}
+
 fn lazygit(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event == PromptEvent::Validate {
         cx.jobs.callback(async {
@@ -3976,6 +3994,17 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         fun: pipe_to,
         completer: SHELL_COMPLETER,
         signature: SHELL_SIGNATURE,
+    },
+    TypableCommand {
+        name: "terminal",
+        aliases: &[],
+        doc: "Open a new shell session in the bottom terminal panel, starting in the current file's directory or the working directory for scratch buffers. Ctrl-/ toggles the panel.",
+        fun: terminal,
+        completer: CommandCompleter::none(),
+        signature: Signature {
+            positionals: (0, Some(0)),
+            ..Signature::DEFAULT
+        },
     },
     TypableCommand {
         name: "lazygit",

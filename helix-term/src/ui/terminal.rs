@@ -1,4 +1,4 @@
-//! An interactive PTY rendered as a modal editor layer.
+//! Interactive PTYs hosted in editor buffers or floating layers.
 use std::{
     io::{Read, Write},
     path::Path,
@@ -26,13 +26,13 @@ use crate::{
 };
 
 pub fn open_lazygit(editor: &mut Editor, compositor: &mut crate::compositor::Compositor) {
-    if compositor.find::<FloatingTerminal>().is_some() {
+    if compositor.find::<Terminal>().is_some() {
         return;
     }
     // The float paints on the editor background, so that is the terminal background
     // the child gets told about.
     let background = editor.theme.get("ui.background").bg;
-    match FloatingTerminal::lazygit(
+    match Terminal::lazygit(
         &helix_loader::find_workspace().0,
         compositor.size(),
         background,
@@ -40,6 +40,23 @@ pub fn open_lazygit(editor: &mut Editor, compositor: &mut crate::compositor::Com
         Ok(terminal) => compositor.push(Box::new(terminal)),
         Err(err) => editor.set_error(format!("{err:#}")),
     }
+}
+
+pub fn open_shell(
+    directory: &Path,
+    editor: &mut Editor,
+    compositor: &mut crate::compositor::Compositor,
+) {
+    let area = compositor.size();
+    if let Some(view) = compositor.find::<super::EditorView>() {
+        if let Err(err) = view.open_terminal_panel(directory, area, editor) {
+            editor.set_error(format!("{err:#}"));
+        }
+    }
+}
+
+pub fn is_toggle_key(key: &KeyEvent) -> bool {
+    key.modifiers == KeyModifiers::CONTROL && matches!(key.code, KeyCode::Char('/' | '_'))
 }
 
 /// Longer than any query prefix we hold back for the rest of its bytes.
@@ -213,7 +230,12 @@ fn is_light((r, g, b): (u8, u8, u8)) -> bool {
     0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b) > 0.1838
 }
 
-pub struct FloatingTerminal {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct TerminalId(pub u64);
+
+pub struct Terminal {
+    panel: Option<TerminalId>,
+    name: String,
     master: Box<dyn MasterPty + Send>,
     killer: Option<Box<dyn ChildKiller + Send + Sync>>,
     parser: Arc<Mutex<vt100::Parser>>,
@@ -221,18 +243,53 @@ pub struct FloatingTerminal {
     area: Rect,
 }
 
-impl FloatingTerminal {
+impl Terminal {
     /// `background` is the color of the surface the terminal is drawn on, which is
     /// reported to the child as its terminal background.
     pub fn new(
-        mut command: CommandBuilder,
+        command: CommandBuilder,
         area: Rect,
         background: Option<Color>,
     ) -> anyhow::Result<Self> {
-        let area = Self::inner_area(area);
+        Self::spawn(command, area, background, None)
+    }
+
+    pub(super) fn for_panel(
+        directory: &Path,
+        id: TerminalId,
+        area: Rect,
+        background: Option<Color>,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            directory.is_dir(),
+            "Not a directory: {}",
+            directory.display()
+        );
+        let mut command = CommandBuilder::new_default_prog();
+        command.cwd(directory);
+        Self::spawn(command, area, background, Some(id))
+    }
+
+    fn spawn(
+        mut command: CommandBuilder,
+        area: Rect,
+        background: Option<Color>,
+        panel: Option<TerminalId>,
+    ) -> anyhow::Result<Self> {
+        let name = command
+            .get_argv()
+            .first()
+            .and_then(|program| Path::new(program).file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "terminal".to_owned());
+        let area = if panel.is_some() {
+            area
+        } else {
+            Self::inner_area(area)
+        };
         anyhow::ensure!(
             area.width > 0 && area.height > 0,
-            "Terminal is too small for lazygit"
+            "Terminal is too small for {name}"
         );
         command.env("TERM", "xterm-256color");
         // The child speaks the terminal protocol we implement, independently of the host.
@@ -244,7 +301,7 @@ impl FloatingTerminal {
         let mut child = pair
             .slave
             .spawn_command(command)
-            .context("Failed to start lazygit (is it installed and on PATH?)")?;
+            .with_context(|| format!("Failed to start {name} (is it installed and on PATH?)"))?;
         drop(pair.slave);
         let killer = child.clone_killer();
         let parser = Arc::new(Mutex::new(vt100::Parser::new(area.height, area.width, 0)));
@@ -281,6 +338,7 @@ impl FloatingTerminal {
         });
         let screen = parser.clone();
         let replies = input.clone();
+        let process_name = name.clone();
         tokio::spawn(async move {
             let mut queries = QueryReplies::new(background);
             while let Some(bytes) = output_rx.recv().await {
@@ -298,7 +356,14 @@ impl FloatingTerminal {
             let result = output.await;
             job::dispatch(move |editor, compositor| {
                 // A previous process must never close a newly opened terminal.
-                let Some(terminal) = compositor.find::<Self>() else {
+                let terminal = if let Some(id) = panel {
+                    compositor
+                        .find::<super::EditorView>()
+                        .and_then(|view| view.terminal_mut(id))
+                } else {
+                    compositor.find::<Self>()
+                };
+                let Some(terminal) = terminal else {
                     return;
                 };
                 if !Arc::ptr_eq(&terminal.parser, &screen) {
@@ -306,11 +371,19 @@ impl FloatingTerminal {
                 }
                 // The process has already been reaped; its PID may now be reused.
                 terminal.killer = None;
-                compositor.remove_type::<Self>();
+                if let Some(id) = panel {
+                    if let Some(view) = compositor.find::<super::EditorView>() {
+                        view.remove_terminal(id);
+                    }
+                } else {
+                    compositor.remove_type::<Self>();
+                }
                 match result {
                     Ok(Ok(status)) if status.success() => (),
-                    Ok(Ok(status)) => editor.set_error(format!("lazygit exited: {status}")),
-                    Ok(Err(err)) => editor.set_error(format!("Failed to wait for lazygit: {err}")),
+                    Ok(Ok(status)) => editor.set_error(format!("{process_name} exited: {status}")),
+                    Ok(Err(err)) => {
+                        editor.set_error(format!("Failed to wait for {process_name}: {err}"))
+                    }
                     Err(err) => editor.set_error(format!("Terminal task failed: {err}")),
                 }
                 helix_event::request_redraw();
@@ -318,6 +391,8 @@ impl FloatingTerminal {
             .await;
         });
         Ok(Self {
+            panel,
+            name,
             master: pair.master,
             killer: Some(killer),
             parser,
@@ -362,12 +437,13 @@ impl FloatingTerminal {
 
     fn send(&self, bytes: Vec<u8>, cx: &mut Context) {
         if !bytes.is_empty() && self.input.send(bytes).is_err() {
-            cx.editor.set_error("The lazygit terminal has closed");
+            cx.editor
+                .set_error(format!("The {} terminal has closed", self.name));
         }
     }
 }
 
-impl Drop for FloatingTerminal {
+impl Drop for Terminal {
     fn drop(&mut self) {
         if let Some(killer) = &mut self.killer {
             let _ = killer.kill();
@@ -375,14 +451,21 @@ impl Drop for FloatingTerminal {
     }
 }
 
-impl Component for FloatingTerminal {
+impl Component for Terminal {
     fn handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
         match event {
             Event::Key(key)
                 if key.code == KeyCode::Char('g') && key.modifiers == KeyModifiers::CONTROL =>
             {
-                return EventResult::Consumed(Some(Box::new(|compositor, _| {
-                    compositor.remove_type::<Self>();
+                let panel = self.panel;
+                return EventResult::Consumed(Some(Box::new(move |compositor, _| {
+                    if let Some(id) = panel {
+                        if let Some(view) = compositor.find::<super::EditorView>() {
+                            view.remove_terminal(id);
+                        }
+                    } else {
+                        compositor.remove_type::<Self>();
+                    }
                 })));
             }
             Event::Key(key) => {
@@ -410,38 +493,70 @@ impl Component for FloatingTerminal {
     }
 
     fn render(&mut self, area: Rect, surface: &mut Buffer, cx: &mut Context) {
-        let outer = Self::outer_area(area);
-        let inner = Self::inner_area(area);
-        if inner.width == 0 || inner.height == 0 {
-            self.area = inner;
-            return;
+        self.render_in_area(area, surface, cx);
+    }
+
+    fn cursor(&self, _area: Rect, _editor: &Editor) -> (Option<Position>, CursorKind) {
+        let parser = self.parser.lock();
+        let screen = parser.screen();
+        let (row, col) = screen.cursor_position();
+        if screen.hide_cursor() || row >= self.area.height || col >= self.area.width {
+            return (None, CursorKind::Hidden);
         }
-        if inner.width != self.area.width || inner.height != self.area.height {
-            if let Err(err) = self.master.resize(Self::pty_size(inner)) {
-                cx.editor
-                    .set_error(format!("Failed to resize lazygit: {err}"));
+        (
+            Some(Position::new(
+                (self.area.y + row).into(),
+                (self.area.x + col).into(),
+            )),
+            CursorKind::Block,
+        )
+    }
+}
+
+impl Terminal {
+    pub(super) fn resize(&mut self, area: Rect, editor: &mut Editor) {
+        if area.width > 0
+            && area.height > 0
+            && (area.width != self.area.width || area.height != self.area.height)
+        {
+            if let Err(err) = self.master.resize(Self::pty_size(area)) {
+                editor.set_error(format!("Failed to resize {}: {err}", self.name));
             }
             self.parser
                 .lock()
                 .screen_mut()
-                .set_size(inner.height, inner.width);
+                .set_size(area.height, area.width);
         }
-        self.area = inner;
+        self.area = area;
+    }
+
+    pub(super) fn render_in_area(&mut self, area: Rect, surface: &mut Buffer, cx: &mut Context) {
+        let (outer, inner) = if self.panel.is_some() {
+            (area, area)
+        } else {
+            (Self::outer_area(area), Self::inner_area(area))
+        };
+        self.resize(inner, cx.editor);
+        if inner.width == 0 || inner.height == 0 {
+            return;
+        }
         for y in outer.top()..outer.bottom() {
             for x in outer.left()..outer.right() {
                 surface[(x, y)].reset();
             }
         }
-        Block::bordered()
-            .title(" lazygit · Ctrl-g: close ")
-            .style(
-                cx.editor
-                    .theme
-                    .get("ui.background")
-                    .patch(cx.editor.theme.get("ui.text")),
-            )
-            .border_style(cx.editor.theme.get("ui.text.inactive"))
-            .render(outer, surface);
+        if self.panel.is_none() {
+            Block::bordered()
+                .title(format!(" {} · Ctrl-g: close ", self.name))
+                .style(
+                    cx.editor
+                        .theme
+                        .get("ui.background")
+                        .patch(cx.editor.theme.get("ui.text")),
+                )
+                .border_style(cx.editor.theme.get("ui.text.inactive"))
+                .render(outer, surface);
+        }
         let parser = self.parser.lock();
         let screen = parser.screen();
         let mut text = String::new();
@@ -478,22 +593,6 @@ impl Component for FloatingTerminal {
                 col = end;
             }
         }
-    }
-
-    fn cursor(&self, _area: Rect, _editor: &Editor) -> (Option<Position>, CursorKind) {
-        let parser = self.parser.lock();
-        let screen = parser.screen();
-        let (row, col) = screen.cursor_position();
-        if screen.hide_cursor() || row >= self.area.height || col >= self.area.width {
-            return (None, CursorKind::Hidden);
-        }
-        (
-            Some(Position::new(
-                (self.area.y + row) as usize,
-                (self.area.x + col) as usize,
-            )),
-            CursorKind::Block,
-        )
     }
 }
 

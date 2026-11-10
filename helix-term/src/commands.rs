@@ -409,6 +409,7 @@ impl MappableCommand {
         toggle_inline_blame, "Toggle inline Git blame for the current line",
         show_diff_hunk, "Toggle inline diff hunk at the cursor",
         lazygit, "Open lazygit in a floating terminal",
+        toggle_terminal, "Show or hide the terminal panel",
         toggle_file_explorer, "Toggle file explorer sidebar",
         focus_file_explorer, "Focus file explorer sidebar",
         file_explorer, "Open file explorer in workspace root",
@@ -3287,6 +3288,17 @@ fn show_diff_hunk(cx: &mut Context) {
 fn lazygit(cx: &mut Context) {
     cx.callback.push(Box::new(|compositor, context| {
         ui::terminal::open_lazygit(context.editor, compositor);
+    }));
+}
+
+fn toggle_terminal(cx: &mut Context) {
+    cx.callback.push(Box::new(|compositor, context| {
+        let area = compositor.size();
+        if let Some(view) = compositor.find::<ui::EditorView>() {
+            if let Err(err) = view.toggle_terminal_panel(area, context.editor) {
+                context.editor.set_error(err.to_string());
+            }
+        }
     }));
 }
 

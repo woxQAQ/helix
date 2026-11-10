@@ -100,6 +100,7 @@
 | `file_picker` | Open file picker | normal: `` <space>f ``, select: `` <space>f `` |
 | `file_picker_in_current_buffer_directory` | Open file picker at current buffer's directory |  |
 | `file_picker_in_current_directory` | Open file picker at current working directory | normal: `` <space>F ``, select: `` <space>F `` |
+| `toggle_terminal` | Show or hide the terminal panel | normal: `` <C-/> ``, `` <C-_> ``, select: `` <C-/> ``, `` <C-_> ``, insert: `` <C-/> ``, `` <C-_> `` |
 | `toggle_file_explorer` | Toggle file explorer sidebar | normal: `` <space>e ``, select: `` <space>e `` |
 | `focus_file_explorer` | Focus file explorer sidebar | normal: `` <space>E ``, select: `` <space>E `` |
 | `file_explorer` | Open file explorer in workspace root |  |

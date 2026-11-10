@@ -86,6 +86,7 @@
 | `:append-output` | Run shell command, appending output after each selection. |
 | `:pipe`, `:\|` | Pipe each selection to the shell command. |
 | `:pipe-to` | Pipe each selection to the shell command, ignoring output. |
+| `:terminal` | Open a new shell session in the bottom terminal panel, starting in the current file's directory or the working directory for scratch buffers. Ctrl-/ toggles the panel. |
 | `:run-shell-command`, `:sh`, `:!` | Run a shell command |
 | `:reset-diff-change`, `:diffget`, `:diffg` | Reset the diff change at the cursor position. |
 | `:clear-register` | Clear given register. If no argument is provided, clear all registers. |

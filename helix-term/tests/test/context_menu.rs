@@ -7,7 +7,7 @@ use helix_term::{
     compositor::{Compositor, Context, Event},
     job::Jobs,
     keymap::{self, Keymaps},
-    ui::EditorView,
+    ui::{terminal::Terminal, EditorView},
 };
 use helix_view::{
     current_ref,
@@ -15,7 +15,7 @@ use helix_view::{
     graphics::{CursorKind, Rect},
     input::{parse_macro, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
 };
-use std::path::Path;
+use std::{path::Path, time::Duration};
 use tui::buffer::Buffer;
 
 struct Harness {
@@ -71,15 +71,98 @@ impl Harness {
             scroll: None,
         };
         self.compositor.handle_event(&event, &mut cx);
-        while let Ok(callback) = cx.jobs.callbacks.try_recv() {
-            if let Some(job) =
-                cx.jobs
-                    .handle_callback(cx.editor, &mut self.compositor, Ok(Some(callback)))
-            {
-                cx.jobs.add(job);
+        self.drain_callbacks();
+        self.render();
+    }
+
+    fn drain_callbacks(&mut self) {
+        while let Ok(callback) = self.jobs.callbacks.try_recv() {
+            if let Some(job) = self.jobs.handle_callback(
+                &mut self.app.editor,
+                &mut self.compositor,
+                Ok(Some(callback)),
+            ) {
+                self.jobs.add(job);
             }
         }
-        self.render();
+    }
+
+    fn panel_body(&self) -> Option<Rect> {
+        let editor = self.app.editor.tree.area();
+        (editor.bottom() < self.area.bottom() - 2).then(|| {
+            Rect::new(
+                editor.x,
+                editor.bottom(),
+                editor.width,
+                self.area.bottom() - editor.bottom() - 2,
+            )
+        })
+    }
+
+    async fn wait_for_terminal_text(&mut self, text: &str) -> anyhow::Result<()> {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                self.drain_callbacks();
+                self.render();
+                let area = self.panel_body().unwrap_or_default();
+                let rendered = (area.y..area.bottom())
+                    .map(|y| {
+                        (area.x..area.right())
+                            .map(|x| self.surface.get(x, y).unwrap().symbol.as_str())
+                            .collect::<String>()
+                            .trim_end()
+                            .to_owned()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let rendered = format!("\n{rendered}\n");
+                if rendered.contains(text) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .map_err(|_| {
+            let area = self.panel_body().unwrap_or_default();
+            let screen = (area.y.saturating_sub(1)..area.bottom())
+                .map(|y| {
+                    (area.x..area.right())
+                        .map(|x| self.surface.get(x, y).unwrap().symbol.as_str())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            anyhow::anyhow!("terminal did not render {text:?}; visible panel:\n{screen}")
+        })
+    }
+
+    async fn assert_terminal_directory(&mut self, directory: &Path) -> anyhow::Result<()> {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while self.panel_body().is_none() {
+                self.drain_callbacks();
+                self.render();
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await?;
+        self.keys("pwd<ret>")?;
+        self.wait_for_terminal_text(&format!("\n{}\n", directory.display()))
+            .await
+    }
+
+    fn session_tab(&self, number: u64) -> (u16, u16) {
+        let y = self.panel_body().unwrap().y - 1;
+        let prefix = format!("{number}:");
+        let x = (self.area.x..self.area.right())
+            .find(|&x| {
+                let text: String = (x..self.area.right())
+                    .map(|x| self.surface.get(x, y).unwrap().symbol.as_str())
+                    .collect();
+                text.starts_with(&prefix)
+            })
+            .expect("the terminal session tab should be visible");
+        (x, y)
     }
 
     fn keys(&mut self, keys: &str) -> anyhow::Result<()> {
@@ -128,6 +211,263 @@ impl Harness {
         }
         panic!("menu item {label:?} should be visible")
     }
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn context_menu_terminal_uses_target_directory_and_command_entry() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let first = directory.path().join("first.txt");
+    let folder = directory.path().join("folder");
+    let child = folder.join("child.txt");
+    std::fs::create_dir(&folder)?;
+    std::fs::write(&first, "first\n")?;
+    std::fs::write(&child, "child\n")?;
+    let mut h = Harness::new(&first)?;
+    h.app.editor.open(&child, Action::Load)?;
+    h.render();
+
+    let child_column = h.area.x + " first.txt ".width() as u16;
+    h.click(MouseButton::Right, child_column, h.area.y);
+    let (x, y) = h.menu_item("Open terminal");
+    h.click(MouseButton::Left, x, y);
+    assert_eq!(current_ref!(h.app.editor).1.path(), Some(first.as_path()));
+    assert_eq!(h.app.editor.documents.len(), 2);
+    assert!(h.panel_body().is_some());
+    assert!(h.compositor.find::<Terminal>().is_none());
+    h.assert_terminal_directory(&folder).await?;
+    h.keys("<C-g>")?;
+    assert_eq!(current_ref!(h.app.editor).1.path(), Some(first.as_path()));
+
+    h.click(MouseButton::Right, h.area.x, h.area.y);
+    h.keys("jjj<ret><esc>")?;
+    let row = h.sidebar_row("folder");
+    h.click(MouseButton::Right, h.area.x + 8, row);
+    let (x, y) = h.menu_item("Open terminal");
+    h.click(MouseButton::Left, x, y);
+    h.assert_terminal_directory(&folder).await?;
+    h.keys("<C-g>")?;
+
+    let row = h.sidebar_row("folder");
+    h.click(MouseButton::Left, h.area.x + 8, row);
+    let row = h.sidebar_row("child.txt");
+    h.click(MouseButton::Right, h.area.x + 8, row);
+    let (x, y) = h.menu_item("Open terminal");
+    h.click(MouseButton::Left, x, y);
+    h.assert_terminal_directory(&folder).await?;
+    h.keys("<C-g><esc>:terminal<ret>")?;
+    h.assert_terminal_directory(directory.path()).await?;
+    h.keys("<C-g>")?;
+    assert!(h.panel_body().is_none());
+    helpers::assert_status_not_error(&h.app.editor);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn terminal_panel_toggle_preserves_shell_and_editor_focus() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let first = directory.path().join("first.txt");
+    let folder = directory.path().join("folder");
+    std::fs::create_dir(&folder)?;
+    std::fs::write(&first, "first\n")?;
+    let mut h = Harness::new(&first)?;
+    let first_id = current_ref!(h.app.editor).1.id();
+    let original_height = h.app.editor.tree.area().height;
+    h.keys("<C-/>")?;
+    assert_eq!(current_ref!(h.app.editor).1.id(), first_id);
+    assert_eq!(h.app.editor.documents.len(), 1);
+    assert_eq!(h.app.editor.tree.views().count(), 1);
+    assert!(h.app.editor.tree.area().height < original_height);
+    h.assert_terminal_directory(directory.path()).await?;
+    h.keys("cd folder<ret>")?;
+    h.assert_terminal_directory(&folder).await?;
+    h.keys("<C-/>")?;
+    assert!(h.panel_body().is_none());
+    assert_eq!(h.app.editor.tree.area().height, original_height);
+    h.keys("iX<esc><C-_>")?;
+    h.assert_terminal_directory(&folder).await?;
+    let editor = h.app.editor.tree.area();
+    h.click(MouseButton::Left, editor.x + 8, editor.y);
+    h.keys("iY<esc>")?;
+    assert!(h.panel_body().is_some());
+    assert!(current_ref!(h.app.editor)
+        .1
+        .text()
+        .to_string()
+        .contains('Y'));
+    let body = h.panel_body().unwrap();
+    h.click(MouseButton::Left, body.x + 2, body.y + 1);
+    h.assert_terminal_directory(&folder).await?;
+    h.keys("<C-/>")?;
+    h.keys("i<C-/>")?;
+    assert!(h.panel_body().is_some());
+    h.assert_terminal_directory(&folder).await?;
+    h.keys("<C-g>")?;
+    assert!(h.panel_body().is_none());
+    assert_eq!(current_ref!(h.app.editor).1.id(), first_id);
+    assert_eq!(h.app.editor.documents.len(), 1);
+    h.keys("<C-/>")?;
+    h.assert_terminal_directory(directory.path()).await?;
+    let original_area = h.area;
+    h.area = Rect::new(3, 2, 10, 4);
+    h.surface = Buffer::empty(h.area);
+    h.render();
+    assert!(h.panel_body().is_none());
+    h.area = original_area;
+    h.surface = Buffer::empty(h.area);
+    h.render();
+    h.assert_terminal_directory(directory.path()).await?;
+    h.keys("<C-g>")?;
+    helpers::assert_status_not_error(&h.app.editor);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn terminal_panel_statusline_stays_below_terminal_and_tracks_file_focus() -> anyhow::Result<()>
+{
+    let directory = tempfile::tempdir()?;
+    let first = directory.path().join("first.txt");
+    let second = directory.path().join("second.txt");
+    std::fs::write(&first, "first\n")?;
+    std::fs::write(&second, "second\n")?;
+    for sidebar in [false, true] {
+        let mut h = Harness::new(&first)?;
+        h.app.editor.open(&second, Action::Load)?;
+        h.render();
+        if sidebar {
+            h.click(MouseButton::Right, h.area.x, h.area.y);
+            h.keys("jjj<ret><esc>")?;
+        }
+        h.keys("<C-/>")?;
+        h.assert_terminal_directory(directory.path()).await?;
+        let body = h.panel_body().unwrap();
+        let status_y = h.area.bottom() - 2;
+        assert_eq!(body.bottom(), status_y);
+        let row = |h: &Harness, y| -> String {
+            (h.area.x..h.area.right())
+                .map(|x| h.surface.get(x, y).unwrap().symbol.as_str())
+                .collect()
+        };
+        assert!(row(&h, status_y).contains("first.txt"));
+        assert!(row(&h, body.y - 1).contains("TERMINAL"));
+        assert!(!row(&h, body.y - 1).contains("first.txt"));
+        let second_tab = h.app.editor.tree.area().x + " first.txt ".width() as u16;
+        h.click(MouseButton::Left, second_tab, h.area.y);
+        assert_eq!(current_ref!(h.app.editor).1.path(), Some(second.as_path()));
+        assert!(row(&h, status_y).contains("second.txt"));
+        assert!(!row(&h, status_y).contains("first.txt"));
+        h.click(MouseButton::Left, h.area.x + 2, status_y);
+        assert_eq!(current_ref!(h.app.editor).1.path(), Some(second.as_path()));
+        h.app.editor.set_status("FOOTER_MESSAGE");
+        h.render();
+        assert!(row(&h, h.area.bottom() - 1).contains("FOOTER_MESSAGE"));
+        assert!(row(&h, status_y).contains("second.txt"));
+        let body = h.panel_body().unwrap();
+        h.click(MouseButton::Left, body.x + 2, body.y + 1);
+        h.keys("<C-g>")?;
+        assert!(h.panel_body().is_none());
+        assert!(row(&h, status_y).contains("second.txt"));
+        helpers::assert_status_not_error(&h.app.editor);
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn terminal_panel_sessions_resize_and_exit_independently() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let first = directory.path().join("first.txt");
+    let folder = directory.path().join("folder");
+    std::fs::create_dir(&folder)?;
+    std::fs::write(&first, "first\n")?;
+    let mut h = Harness::new(&first)?;
+    h.keys("<C-/>")?;
+    h.assert_terminal_directory(directory.path()).await?;
+    h.keys("cd folder<ret>")?;
+    h.assert_terminal_directory(&folder).await?;
+    let header = h.panel_body().unwrap().y - 1;
+    h.click(MouseButton::Left, h.area.right() - 11, header);
+    h.assert_terminal_directory(directory.path()).await?;
+    let (x, y) = h.session_tab(1);
+    h.click(MouseButton::Left, x, y);
+    h.assert_terminal_directory(&folder).await?;
+    // Resize the dock without changing the editor's split structure.
+    let header = h.panel_body().unwrap().y - 1;
+    h.event(Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: h.area.x + 2,
+        row: header,
+        modifiers: KeyModifiers::empty(),
+    }));
+    h.event(Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Drag(MouseButton::Left),
+        column: h.area.x + 2,
+        row: header - 4,
+        modifiers: KeyModifiers::empty(),
+    }));
+    h.event(Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Up(MouseButton::Left),
+        column: h.area.x + 2,
+        row: header - 4,
+        modifiers: KeyModifiers::empty(),
+    }));
+    assert_eq!(h.panel_body().unwrap().y - 1, header - 4);
+    let body = h.panel_body().unwrap();
+    h.keys("echo SIZE_START;stty size;echo SIZE_END<ret>")?;
+    h.wait_for_terminal_text(&format!(
+        "SIZE_START\n{} {}\nSIZE_END",
+        body.height, body.width
+    ))
+    .await?;
+    h.keys("exit<ret>")?;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            h.drain_callbacks();
+            h.render();
+            let header = h.panel_body().unwrap().y - 1;
+            let text: String = (h.area.x..h.area.right())
+                .map(|x| h.surface.get(x, header).unwrap().symbol.as_str())
+                .collect();
+            if !text.contains("1:") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await?;
+    h.assert_terminal_directory(directory.path()).await?;
+    assert_eq!(h.app.editor.documents.len(), 1);
+    assert_eq!(h.app.editor.tree.views().count(), 1);
+    h.keys("cd folder<ret>")?;
+    h.assert_terminal_directory(&folder).await?;
+    h.area = Rect::new(3, 2, 46, 24);
+    h.surface = Buffer::empty(h.area);
+    h.render();
+    let header = h.panel_body().unwrap().y - 1;
+    h.click(MouseButton::Left, h.area.right() - 11, header);
+    h.assert_terminal_directory(directory.path()).await?;
+    h.session_tab(3);
+    h.event(Event::Mouse(MouseEvent {
+        kind: MouseEventKind::ScrollUp,
+        column: h.area.x + 2,
+        row: header,
+        modifiers: KeyModifiers::empty(),
+    }));
+    h.assert_terminal_directory(&folder).await?;
+    h.keys("<C-g>")?;
+    h.assert_terminal_directory(directory.path()).await?;
+    let header = h.panel_body().unwrap().y - 1;
+    h.click(MouseButton::Left, h.area.right() - 3, header);
+    assert!(h.panel_body().is_none());
+    h.keys("<C-/>")?;
+    h.assert_terminal_directory(directory.path()).await?;
+    let header = h.panel_body().unwrap().y - 1;
+    h.click(MouseButton::Left, h.area.right() - 7, header);
+    assert!(h.panel_body().is_none());
+    helpers::assert_status_not_error(&h.app.editor);
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread")]

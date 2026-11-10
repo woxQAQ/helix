@@ -767,15 +767,29 @@ impl EditorView {
 
         let mut x = viewport.x;
         let current_doc = view!(editor).doc;
+        let paths: Vec<_> = editor.documents().filter_map(Document::path).collect();
 
         for doc in editor.documents() {
-            let fname = doc
-                .path()
-                .unwrap_or(&scratch)
-                .file_name()
-                .unwrap_or_default()
-                .to_str()
-                .unwrap_or_default();
+            let path = doc.path().unwrap_or(&scratch);
+            // Include enough trailing components to distinguish this file from every other buffer.
+            let components = paths
+                .iter()
+                .filter(|&&other| other != path)
+                .map(|other| {
+                    path.components()
+                        .rev()
+                        .zip(other.components().rev())
+                        .take_while(|(left, right)| left == right)
+                        .count()
+                        + 1
+                })
+                .max()
+                .unwrap_or(1);
+            let label: PathBuf = path
+                .components()
+                .skip(path.components().count().saturating_sub(components))
+                .collect();
+            let fname = label.to_string_lossy();
 
             let style = if current_doc == doc.id() {
                 bufferline_active

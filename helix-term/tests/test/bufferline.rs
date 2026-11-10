@@ -17,6 +17,77 @@ use helix_view::{
 use tui::buffer::Buffer;
 
 #[tokio::test(flavor = "multi_thread")]
+async fn bufferline_disambiguates_paths_and_keeps_tabs_clickable() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let labels = ["a/main.rs", "b/main.rs", "a/src/lib.rs", "b/src/lib.rs"];
+    let paths: Vec<_> = labels
+        .iter()
+        .map(|label| directory.path().join(label))
+        .collect();
+    for path in &paths {
+        std::fs::create_dir_all(path.parent().unwrap())?;
+        std::fs::write(path, "hello\n")?;
+    }
+    let mut config = helpers::test_config();
+    config.editor.bufferline = BufferLine::Always;
+    let mut app = helpers::AppBuilder::new()
+        .with_config(config)
+        .with_file(&paths[0], None)
+        .build()?;
+    let area = Rect::new(3, 2, 100, 20);
+    let mut compositor = Compositor::new(area);
+    compositor.push(Box::new(EditorView::new(Keymaps::new(Box::new(
+        ArcSwap::from_pointee(keymap::default()),
+    )))));
+    let mut jobs = Jobs::new();
+    let mut cx = Context {
+        editor: &mut app.editor,
+        scroll: None,
+        jobs: &mut jobs,
+    };
+    let mut surface = Buffer::empty(area);
+    let row_text = |surface: &Buffer| -> String {
+        (area.x..area.right())
+            .map(|x| surface.get(x, area.y).unwrap().symbol.as_str())
+            .collect()
+    };
+    compositor.render(area, &mut surface, &mut cx);
+    assert!(row_text(&surface).starts_with(" main.rs "));
+
+    for path in &paths[1..] {
+        cx.editor.open(path, Action::Load)?;
+    }
+    compositor.render(area, &mut surface, &mut cx);
+    let expected: String = labels.iter().map(|label| format!(" {label} ")).collect();
+    assert!(row_text(&surface).starts_with(&expected));
+
+    let mut column = area.x;
+    for (path, label) in paths.iter().zip(labels) {
+        compositor.handle_event(
+            &Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column,
+                row: area.y,
+                modifiers: KeyModifiers::empty(),
+            }),
+            &mut cx,
+        );
+        compositor.render(area, &mut surface, &mut cx);
+        assert_eq!(current_ref!(cx.editor).1.path(), Some(path.as_path()));
+        column += format!(" {label} ").width() as u16;
+    }
+
+    // Closing a conflicting buffer restores the shorter label on the next render.
+    for key in parse_macro(":buffer-close<ret>")? {
+        compositor.handle_event(&Event::Key(key), &mut cx);
+        compositor.render(area, &mut surface, &mut cx);
+    }
+    assert!(row_text(&surface).starts_with(" a/main.rs  b/main.rs  lib.rs "));
+    helpers::assert_status_not_error(cx.editor);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn bufferline_clicks_follow_rendered_tabs() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let first = directory.path().join("中文.txt");

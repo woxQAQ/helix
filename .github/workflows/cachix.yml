@@ -1,32 +1,21 @@
-# Publish the Nix flake outputs to Cachix
-name: Cachix
+name: Trigger binary cache
 on:
   push:
-    branches:
-      - master
-
+    branches: [master]
+  workflow_dispatch:
 permissions:
   contents: read
-
 jobs:
-  publish:
-    name: Publish Flake
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+  trigger-cache:
+    if: github.repository == 'woxQAQ/helix'
+    runs-on: ubuntu-latest
     steps:
-    - name: Checkout sources
-      uses: actions/checkout@v7
-
-    - name: Install nix
-      uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31.10.6
-
-    - name: Authenticate with Cachix
-      uses: cachix/cachix-action@5f2d7c5294214f71b873db4b969586b980625e71 # v17
-      with:
-        name: helix
-        authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
-
-    - name: Build nix flake
-      run: nix build -L
+      - name: Build this revision with the host configuration
+        env:
+          GH_TOKEN: ${{ secrets.NIXOS_CONFIG_DISPATCH_TOKEN }}
+        run: |
+          gh workflow run cicd_cache.yaml \
+            --repo woxQAQ/nixos-config \
+            --ref main \
+            --field source=helix \
+            --field revision="$GITHUB_SHA"

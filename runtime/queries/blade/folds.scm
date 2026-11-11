@@ -1,9 +1,16 @@
-; inherits: html
-
-((directive_start) @start
-    (directive_end) @end.after
-    (#set! role block))
-
-((bracket_start) @start
-    (bracket_end) @end
-    (#set! role block))
+[
+  (element)
+  (script_element)
+  (style_element)
+  (conditional)
+  (envoy)
+  (livewire)
+  (loop)
+  (once)
+  (php_statement)
+  (section)
+  (stack)
+  (switch)
+  (verbatim)
+  (comment)
+] @fold

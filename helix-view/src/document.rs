@@ -2473,24 +2473,40 @@ impl Document {
         self.inlay_hints.insert(view_id, inlay_hints);
     }
 
-    /// The smallest enclosing multiline syntax construct, excluding file and statement lists.
+    /// The smallest enclosing multiline construct, using language fold rules when available.
     pub fn syntax_fold_range(&self, cursor: usize) -> Option<(usize, usize)> {
         let text = self.text.slice(..);
         let byte = text.char_to_byte(cursor) as u32;
-        let tree = self.syntax()?.tree_for_byte_range(byte, byte);
-        let mut node = tree.root_node().descendant_for_byte_range(byte, byte)?;
-        loop {
-            let start = text.byte_to_char(node.start_byte() as usize);
-            let end = text.byte_to_char(node.end_byte() as usize);
-            let first = text.char_to_line(start);
-            let last = text.char_to_line(end.saturating_sub(1).max(start));
-            let parent = node.parent();
-            // Statement lists group siblings; their first statement is not a fold header.
-            if first < last && parent.is_some() && node.kind() != "statement_list" {
-                return Some((first, last));
-            }
-            node = parent?;
-        }
+        let syntax = self.syntax()?;
+        let loader = self.syn_loader.as_ref().load();
+        let line = text.char_to_line(cursor);
+        let end = text.char_to_byte(helix_core::line_ending::line_end_char_index(&text, line));
+        let range = byte..(end as u32).max(byte + 1);
+        // Injections such as comment highlighting must not hide a host language's folds.
+        syntax
+            .layers_for_byte_range(byte, byte)
+            .filter_map(|layer| {
+                let layer = syntax.layer(layer);
+                let tree = layer.tree()?;
+                if let Some(query) = loader.fold_query(layer.language) {
+                    // A header can precede its foldable expression, as in `name = {`.
+                    return query.range_at(&tree.root_node(), text, range.clone());
+                }
+                let mut node = tree.root_node().descendant_for_byte_range(byte, byte)?;
+                loop {
+                    let start = text.byte_to_char(node.start_byte() as usize);
+                    let end = text.byte_to_char(node.end_byte() as usize);
+                    let first = text.char_to_line(start);
+                    let last = text.char_to_line(end.saturating_sub(1).max(start));
+                    let parent = node.parent();
+                    // Statement lists group siblings; their first statement is not a fold header.
+                    if first < last && parent.is_some() && node.kind() != "statement_list" {
+                        return Some((first, last));
+                    }
+                    node = parent?;
+                }
+            })
+            .min_by_key(|&(first, last)| last - first)
     }
 
     /// A foldable syntax node starting on this document line.

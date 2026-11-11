@@ -17,6 +17,190 @@ use helix_view::{
 use tui::buffer::Buffer;
 
 #[tokio::test(flavor = "multi_thread")]
+async fn folding_nix_attributes_only_mark_multiline_constructs() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("hardware.nix");
+    for soft_wrap in [false, true] {
+        for newline in ["\n", "\r\n"] {
+            let source = [
+                "{",
+                "  modules.hardware = {",
+                "    opengl.enable = true;",
+                "    amd = {",
+                "      enable = true;",
+                "      rocm.enable = true;",
+                "    };",
+                "  };",
+                "  label = \"中文\";",
+                "  packages = [",
+                "    pkgs.hello",
+                "    pkgs.git",
+                "  ];",
+                "  script = ''",
+                "    echo hello",
+                "    echo world",
+                "  '';",
+                "  /* comment",
+                "     continued */",
+                "}",
+                "",
+            ]
+            .join(newline);
+            std::fs::write(&path, &source)?;
+            let mut config = test_config();
+            config.editor.soft_wrap.enable = Some(soft_wrap);
+            let mut app = AppBuilder::new()
+                .with_config(config)
+                .with_file(&path, None)
+                .build()?;
+            let area = Rect::new(3, 2, 100, 25);
+            let mut compositor = Compositor::new(area);
+            compositor.push(Box::new(EditorView::new(Keymaps::new(Box::new(
+                ArcSwap::from_pointee(keymap::default()),
+            )))));
+            let mut jobs = Jobs::new();
+            let mut cx = Context {
+                editor: &mut app.editor,
+                scroll: None,
+                jobs: &mut jobs,
+            };
+            let mut surface = Buffer::empty(area);
+            compositor.render(area, &mut surface, &mut cx);
+            let (view, doc) = current_ref!(cx.editor);
+            let inner = view.inner_area(doc);
+            let chevron = view.fold_toggle_column(doc).unwrap();
+            for line in 0..20 {
+                let pos = view
+                    .screen_coords_at_pos(doc, doc.text().slice(..), doc.text().line_to_char(line))
+                    .unwrap();
+                let expected = if matches!(line, 0 | 1 | 3 | 9 | 13 | 17) {
+                    "▼"
+                } else {
+                    " "
+                };
+                assert_eq!(
+                    surface[(chevron, inner.y + pos.row as u16)].symbol.as_str(),
+                    expected,
+                    "incorrect fold marker on Nix line {}",
+                    line + 1
+                );
+            }
+            let click = |line, compositor: &mut Compositor, cx: &mut Context| {
+                for kind in [
+                    MouseEventKind::Down(MouseButton::Left),
+                    MouseEventKind::Up(MouseButton::Left),
+                ] {
+                    compositor.handle_event(
+                        &Event::Mouse(MouseEvent {
+                            kind,
+                            column: chevron,
+                            row: inner.y + line,
+                            modifiers: KeyModifiers::empty(),
+                        }),
+                        cx,
+                    );
+                }
+            };
+            click(2, &mut compositor, &mut cx);
+            assert!(current_ref!(cx.editor)
+                .1
+                .folds(current_ref!(cx.editor).0.id)
+                .is_empty());
+            click(3, &mut compositor, &mut cx);
+            {
+                let (view, doc) = current_ref!(cx.editor);
+                assert_eq!(doc.folds(view.id).len(), 1);
+                assert_eq!(doc.text().char_to_line(doc.folds(view.id)[0].start), 3);
+                assert_eq!(doc.text().char_to_line(doc.folds(view.id)[0].end), 6);
+            }
+            click(3, &mut compositor, &mut cx);
+            {
+                let (view, doc) = helix_view::current!(cx.editor);
+                doc.set_selection(view.id, Selection::point(doc.text().line_to_char(4) + 6));
+            }
+            for key in parse_macro("zf")? {
+                compositor.handle_event(&Event::Key(key), &mut cx);
+            }
+            let (view, doc) = current_ref!(cx.editor);
+            assert_eq!(doc.folds(view.id).len(), 1);
+            assert_eq!(doc.text().char_to_line(doc.folds(view.id)[0].start), 3);
+            assert_eq!(doc.text().char_to_line(doc.folds(view.id)[0].end), 6);
+            assert_eq!(doc.text().to_string(), source);
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn folding_language_queries_define_regions() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    for (name, source, headers, last) in [
+        (
+            "bindings.nix",
+            "let\n  flag = true;\n  settings = {\n    enable = true;\n  };\nin settings\n",
+            &[0, 2][..],
+            5,
+        ),
+        (
+            "view.blade.php",
+            "@if ($show)\n  <div>\n    hello\n  </div>\n@endif\n",
+            &[0, 1][..],
+            4,
+        ),
+        (
+            "document.tex",
+            "\\begin{document}\nhello\n\\end{document}\n",
+            &[0][..],
+            2,
+        ),
+    ] {
+        let path = directory.path().join(name);
+        std::fs::write(&path, source)?;
+        let mut app = AppBuilder::new().with_file(&path, None).build()?;
+        let area = Rect::new(3, 2, 100, 25);
+        let mut compositor = Compositor::new(area);
+        compositor.push(Box::new(EditorView::new(Keymaps::new(Box::new(
+            ArcSwap::from_pointee(keymap::default()),
+        )))));
+        let mut jobs = Jobs::new();
+        let mut cx = Context {
+            editor: &mut app.editor,
+            scroll: None,
+            jobs: &mut jobs,
+        };
+        let mut surface = Buffer::empty(area);
+        compositor.render(area, &mut surface, &mut cx);
+        let (view, doc) = current_ref!(cx.editor);
+        let inner = view.inner_area(doc);
+        let chevron = view.fold_toggle_column(doc).unwrap();
+        for line in 0..=last {
+            assert_eq!(
+                surface[(chevron, inner.y + line as u16)].symbol.as_str(),
+                if headers.contains(&line) { "▼" } else { " " },
+                "incorrect fold marker in {name} on line {}",
+                line + 1
+            );
+        }
+        for key in parse_macro("zf")? {
+            compositor.handle_event(&Event::Key(key), &mut cx);
+        }
+        let (view, doc) = current_ref!(cx.editor);
+        assert_eq!(doc.folds(view.id).len(), 1, "{name}");
+        assert_eq!(
+            doc.text().char_to_line(doc.folds(view.id)[0].start),
+            0,
+            "{name}"
+        );
+        assert_eq!(
+            doc.text().char_to_line(doc.folds(view.id)[0].end),
+            last,
+            "{name}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn folding_go_statement_lists_do_not_fold_from_the_first_statement() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("drawio.go");

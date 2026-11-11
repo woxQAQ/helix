@@ -42,6 +42,7 @@ pub struct LanguageData {
     syntax: OnceLock<Option<SyntaxConfig>>,
     indent_query: OnceLock<Option<IndentQuery>>,
     textobject_query: OnceLock<Option<TextObjectQuery>>,
+    fold_query: OnceLock<Option<FoldQuery>>,
     tag_query: OnceLock<Option<TagQuery>>,
     rainbow_query: OnceLock<Option<RainbowQuery>>,
 }
@@ -53,6 +54,7 @@ impl LanguageData {
             syntax: OnceLock::new(),
             indent_query: OnceLock::new(),
             textobject_query: OnceLock::new(),
+            fold_query: OnceLock::new(),
             tag_query: OnceLock::new(),
             rainbow_query: OnceLock::new(),
         }
@@ -157,6 +159,35 @@ impl LanguageData {
                     .map_err(|err| {
                         log::error!("{err}");
                     })
+                    .ok()
+                    .flatten()
+            })
+            .as_ref()
+    }
+
+    /// Compiles the folds.scm query for a language.
+    pub fn compile_fold_query(
+        grammar: Grammar,
+        config: &LanguageConfiguration,
+    ) -> Result<Option<FoldQuery>> {
+        let name = &config.language_id;
+        let text = read_query(name, "folds.scm");
+        if text.is_empty() {
+            return Ok(None);
+        }
+        let query = Query::new(grammar, &text, |_, _| Ok(()))
+            .with_context(|| format!("Failed to compile folds.scm query for '{name}'"))?;
+        Ok(query
+            .get_capture("fold")
+            .map(|capture| FoldQuery { query, capture }))
+    }
+
+    fn fold_query(&self, loader: &Loader) -> Option<&FoldQuery> {
+        self.fold_query
+            .get_or_init(|| {
+                let grammar = self.syntax_config(loader)?.grammar;
+                Self::compile_fold_query(grammar, &self.config)
+                    .map_err(|err| log::error!("{err:#}"))
                     .ok()
                     .flatten()
             })
@@ -410,6 +441,10 @@ impl Loader {
 
     pub fn indent_query(&self, lang: Language) -> Option<&IndentQuery> {
         self.language(lang).indent_query(self)
+    }
+
+    pub fn fold_query(&self, lang: Language) -> Option<&FoldQuery> {
+        self.language(lang).fold_query(self)
     }
 
     pub fn textobject_query(&self, lang: Language) -> Option<&TextObjectQuery> {
@@ -1066,6 +1101,41 @@ impl TextObjectQuery {
             }
         });
         Some(capture_node)
+    }
+}
+
+/// Language-defined fold regions captured with `@fold`.
+#[derive(Debug)]
+pub struct FoldQuery {
+    query: Query,
+    capture: Capture,
+}
+
+impl FoldQuery {
+    /// The smallest multiline region intersecting the cursor's remaining line.
+    pub fn range_at(
+        &self,
+        root: &Node<'_>,
+        source: RopeSlice<'_>,
+        range: ops::Range<u32>,
+    ) -> Option<(usize, usize)> {
+        let mut cursor = InactiveQueryCursor::new(range.clone(), TREE_SITTER_MATCH_LIMIT)
+            .execute_query(&self.query, root, RopeInput::new(source));
+        let mut best = None;
+        while let Some(mat) = cursor.next_match() {
+            for node in mat.nodes_for_capture(self.capture) {
+                let bytes = node.byte_range();
+                if bytes.start >= range.end || bytes.end <= range.start {
+                    continue;
+                }
+                let first = source.byte_to_line(bytes.start as usize);
+                let last = source.byte_to_line(bytes.end.saturating_sub(1) as usize);
+                if first < last && best.is_none_or(|(size, _)| bytes.len() < size) {
+                    best = Some((bytes.len(), (first, last)));
+                }
+            }
+        }
+        best.map(|(_, lines)| lines)
     }
 }
 

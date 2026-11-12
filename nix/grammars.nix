@@ -9,7 +9,7 @@
   ...
 }:
 let
-  languagesConfig = fromTOML (builtins.readFile ../languages.toml);
+  languagesConfig = builtins.fromTOML (builtins.readFile ../languages.toml);
   sources = builtins.fromJSON (builtins.readFile ./grammar-sources.json);
   isGitGrammar =
     grammar:
@@ -130,12 +130,20 @@ let
   overlaidGrammars = lib.pipe extensibleGrammars (
     map (overlay: grammar: grammar.extend overlay) grammarOverlays
   );
+  linkedGrammars = lib.filterAttrs (n: v: lib.isDerivation v) overlaidGrammars;
   sharedLibExtension = stdenv.hostPlatform.extensions.sharedLibrary;
   grammarLinks = lib.mapAttrsToList (
-    name: artifact: "ln -s ${artifact}/${name}${sharedLibExtension} $out/${name}${sharedLibExtension}"
-  ) (lib.filterAttrs (n: v: lib.isDerivation v) overlaidGrammars);
+    name: artifact:
+    "ln -s ${artifact}/${
+      artifact.passthru.SHARED_LIB or "${name}${sharedLibExtension}"
+    } $out/${name}${sharedLibExtension}"
+  ) linkedGrammars;
 in
-runCommand "consolidated-helix-grammars" { } ''
-  mkdir -p $out
-  ${builtins.concatStringsSep "\n" grammarLinks}
-''
+runCommand "consolidated-helix-grammars"
+  {
+    passthru.names = builtins.attrNames linkedGrammars;
+  }
+  ''
+    mkdir -p $out
+    ${builtins.concatStringsSep "\n" grammarLinks}
+  ''

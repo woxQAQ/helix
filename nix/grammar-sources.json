@@ -1465,10 +1465,10 @@
     }
   },
   "qmljs": {
-    "hash": "sha256-Hf8LfrN3YjN9hpGtTVmK3ZjJ/b/fsRCg9FG7hSSj/mk=",
+    "hash": "sha256-Yn3/adOETfPHBVCIVfI5qXUwC2wQr14pbhK2aUtdCiY=",
     "source": {
       "git": "https://github.com/yuja/tree-sitter-qmljs",
-      "rev": "0b2b25bcaa7d4925d5f0dda16f6a99c588a437f1"
+      "rev": "de96ed62abded51fcdfcbeaaa120e0dd0d20c697"
     }
   },
   "query": {

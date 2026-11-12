@@ -314,11 +314,9 @@ impl FileWatcher {
                         let view = helix_view::view_mut!(editor, view_id);
                         let doc = helix_view::doc_mut!(editor, &id);
                         doc.ensure_view_init(view_id);
-                        view.sync_changes(doc);
                         doc.reload_text(view, text, saved_time);
+                        let doc = helix_view::doc_mut!(editor, &id);
                         for (view, _) in editor.tree.views_mut() {
-                            let doc = helix_view::doc_mut!(editor, &id);
-                            view.sync_changes(doc);
                             if view.doc == id {
                                 view.ensure_cursor_in_view(doc, scrolloff);
                             }

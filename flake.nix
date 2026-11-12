@@ -76,7 +76,7 @@
             inputsFrom = [
               (self.checks.${system}.helix.override {
                 includeGrammarIf = _: false;
-              })
+              }).unwrapped
             ];
             nativeBuildInputs =
               with pkgs;

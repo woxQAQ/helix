@@ -129,37 +129,35 @@ fn open_external_file_callback(
     )
 }
 
-fn external_open_callback(
+async fn external_open_callback(
     commands: Vec<Command>,
     failure_message: &'static str,
-) -> impl Future<Output = Result<job::Callback, anyhow::Error>> + Send + 'static {
-    async move {
-        for cmd in commands {
-            let mut command: tokio::process::Command = cmd.into();
-            command.stdin(Stdio::null());
-            let output = match command.output().await {
-                Ok(output) => output,
-                Err(err) => {
-                    log::debug!("Failed to launch external opener: {err}");
-                    continue;
-                }
-            };
-            if output.status.success() {
-                return Ok(job::Callback::Editor(Box::new(|_| {})));
+) -> Result<job::Callback, anyhow::Error> {
+    for cmd in commands {
+        let mut command: tokio::process::Command = cmd.into();
+        command.stdin(Stdio::null());
+        let output = match command.output().await {
+            Ok(output) => output,
+            Err(err) => {
+                log::debug!("Failed to launch external opener: {err}");
+                continue;
             }
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            log::warn!(
-                "External opener exited with status {}. stdout: {:?}, stderr: {:?}",
-                output.status,
-                stdout.trim(),
-                stderr.trim()
-            );
+        };
+        if output.status.success() {
+            return Ok(job::Callback::Editor(Box::new(|_| {})));
         }
-        Ok(job::Callback::Editor(Box::new(move |editor| {
-            editor.set_error(failure_message)
-        })))
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        log::warn!(
+            "External opener exited with status {}. stdout: {:?}, stderr: {:?}",
+            output.status,
+            stdout.trim(),
+            stderr.trim()
+        );
     }
+    Ok(job::Callback::Editor(Box::new(move |editor| {
+        editor.set_error(failure_message)
+    })))
 }
 
 #[cfg(test)]

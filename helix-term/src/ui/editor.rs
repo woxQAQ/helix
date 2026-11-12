@@ -1898,7 +1898,7 @@ impl EditorView {
     fn handle_explorer_outcome(
         &mut self,
         outcome: Outcome,
-        mut cx: &mut commands::Context,
+        cx: &mut commands::Context,
     ) -> EventResult {
         if let Outcome::ContextMenu {
             position,
@@ -1917,7 +1917,7 @@ impl EditorView {
         if let Outcome::Delete(path) = &outcome {
             let path = path.clone();
             super::prompt(
-                &mut cx,
+                cx,
                 format!("Permanently delete {}? [y/N] ", path.display()).into(),
                 None,
                 |_, _| Vec::new(),
@@ -1952,7 +1952,7 @@ impl EditorView {
             let directory = matches!(outcome, Outcome::CreateDirectory(_));
             let parent = parent.clone();
             super::prompt(
-                &mut cx,
+                cx,
                 format!(
                     "Create {} in {}{}: ",
                     if directory { "directory" } else { "file" },
@@ -2005,7 +2005,7 @@ impl EditorView {
                 .to_string_lossy()
                 .into_owned();
             super::prompt_with_input(
-                &mut cx,
+                cx,
                 format!("Rename {} to: ", path.display()).into(),
                 name,
                 None,

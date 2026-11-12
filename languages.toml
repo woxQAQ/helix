@@ -1,7 +1,8 @@
 # Language support configuration.
 # See the languages documentation: https://docs.helix-editor.com/master/languages.html
 
-use-grammars = { except = [ "wren", "gemini" ] }
+# The pinned Cylc grammar repository is no longer publicly available.
+use-grammars = { except = [ "wren", "gemini", "cylc" ] }
 
 [language-server]
 

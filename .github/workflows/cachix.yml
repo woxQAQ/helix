@@ -10,6 +10,10 @@ jobs:
     if: github.repository == 'woxQAQ/helix'
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Verify grammar source lock
+        run: python3 nix/update-grammars.py --check
       - name: Build this revision with the host configuration
         env:
           GH_TOKEN: ${{ secrets.NIXOS_CONFIG_DISPATCH_TOKEN }}

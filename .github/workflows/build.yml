@@ -29,6 +29,9 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v7
 
+      - name: Verify grammar source lock
+        run: python3 nix/update-grammars.py --check
+
       - uses: ./.github/actions/rust-setup
         with:
           toolchain: ${{ env.MSRV }}

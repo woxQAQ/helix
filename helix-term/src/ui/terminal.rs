@@ -230,6 +230,30 @@ fn is_light((r, g, b): (u8, u8, u8)) -> bool {
     0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b) > 0.1838
 }
 
+/// Replies to cursor queries at the exact point they occur in the output stream.
+struct CursorReplies {
+    input: mpsc::UnboundedSender<Vec<u8>>,
+}
+
+impl vt100::Callbacks for CursorReplies {
+    fn unhandled_csi(
+        &mut self,
+        screen: &mut vt100::Screen,
+        i1: Option<u8>,
+        i2: Option<u8>,
+        params: &[&[u16]],
+        c: char,
+    ) {
+        if i1.is_none() && i2.is_none() && params == [&[6][..]] && c == 'n' {
+            let (row, col) = screen.cursor_position();
+            // Screen coordinates are zero-based; terminal reports are one-based.
+            self.input
+                .send(format!("\x1b[{};{}R", row + 1, col + 1).into_bytes())
+                .ok();
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct TerminalId(pub u64);
 
@@ -238,7 +262,7 @@ pub struct Terminal {
     name: String,
     master: Box<dyn MasterPty + Send>,
     killer: Option<Box<dyn ChildKiller + Send + Sync>>,
-    parser: Arc<Mutex<vt100::Parser>>,
+    parser: Arc<Mutex<vt100::Parser<CursorReplies>>>,
     input: mpsc::UnboundedSender<Vec<u8>>,
     area: Rect,
 }
@@ -304,9 +328,16 @@ impl Terminal {
             .with_context(|| format!("Failed to start {name} (is it installed and on PATH?)"))?;
         drop(pair.slave);
         let killer = child.clone_killer();
-        let parser = Arc::new(Mutex::new(vt100::Parser::new(area.height, area.width, 0)));
         let (output_tx, mut output_rx) = mpsc::channel::<Vec<u8>>(16);
         let (input, mut input_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let parser = Arc::new(Mutex::new(vt100::Parser::new_with_callbacks(
+            area.height,
+            area.width,
+            0,
+            CursorReplies {
+                input: input.clone(),
+            },
+        )));
         tokio::task::spawn_blocking(move || {
             while let Some(bytes) = input_rx.blocking_recv() {
                 if writer

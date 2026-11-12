@@ -170,6 +170,21 @@ async fn floating_terminal_answers_queries_split_across_reads() -> anyhow::Resul
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
+async fn floating_terminal_reports_cursor_at_each_query() -> anyhow::Result<()> {
+    // Move again after each query in the same write. Replies must describe the
+    // cursor at the query, rather than its position at the end of a PTY read.
+    let rendered = child_output(
+        None,
+        r"printf '\033[3;7H\033[6n\033[5;9H\033[6n\033[1;1H'; head -c 12 | od -An -tx1 | tr -d ' \n'; printf '\033[4;2H界\033['; sleep 0.2; printf '6n\033[1;30H'; head -c 6 | od -An -tx1 | tr -d ' \n'",
+    )
+    .await?;
+    assert!(rendered.contains("1b5b333b37521b5b353b3952"), "{rendered}");
+    assert!(rendered.contains("1b5b343b3452"), "{rendered}");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
 async fn floating_terminal_answers_terminal_queries() -> anyhow::Result<()> {
     // tcell-based children (lazygit) block for a second when the terminal does not
     // answer the device attributes query.

@@ -65,6 +65,10 @@
 | `page_cursor_half_up` | Move page and cursor half up | normal: `` <C-u> ``, `` Z<C-u> ``, `` z<C-u> ``, `` Z<backspace> ``, `` z<backspace> ``, select: `` <C-u> ``, `` Z<C-u> ``, `` z<C-u> ``, `` Z<backspace> ``, `` z<backspace> `` |
 | `page_cursor_half_down` | Move page and cursor half down | normal: `` <C-d> ``, `` Z<C-d> ``, `` z<C-d> ``, `` Z<space> ``, `` z<space> ``, select: `` <C-d> ``, `` Z<C-d> ``, `` z<C-d> ``, `` Z<space> ``, `` z<space> `` |
 | `select_all` | Select whole document | normal: `` % ``, select: `` % `` |
+| `fold` | Fold selections or the current syntax node | normal: `` Zf ``, `` zf ``, select: `` Zf ``, `` zf `` |
+| `unfold` | Open folds at the cursors | normal: `` Zo ``, `` zo ``, select: `` Zo ``, `` zo `` |
+| `toggle_fold` | Toggle folds at the cursors | normal: `` Za ``, `` za ``, select: `` Za ``, `` za `` |
+| `unfold_all` | Open all folds in this view | normal: `` ZR ``, `` zR ``, select: `` ZR ``, `` zR `` |
 | `select_regex` | Select all regex matches inside selections | normal: `` s ``, select: `` s `` |
 | `split_selection` | Split selections on regex matches | normal: `` S ``, select: `` S `` |
 | `split_selection_on_newline` | Split selection on newlines | normal: `` <A-s> ``, select: `` <A-s> `` |
@@ -100,6 +104,9 @@
 | `file_picker` | Open file picker | normal: `` <space>f ``, select: `` <space>f `` |
 | `file_picker_in_current_buffer_directory` | Open file picker at current buffer's directory |  |
 | `file_picker_in_current_directory` | Open file picker at current working directory | normal: `` <space>F ``, select: `` <space>F `` |
+| `toggle_inline_blame` | Toggle inline Git blame for the current line | normal: `` <space>vb ``, select: `` <space>vb `` |
+| `show_diff_hunk` | Toggle inline diff hunk at the cursor | normal: `` <space>vh ``, select: `` <space>vh `` |
+| `lazygit` | Open lazygit in a floating terminal | normal: `` <space>l ``, `` <space>vl ``, select: `` <space>l ``, `` <space>vl `` |
 | `toggle_terminal` | Show or hide the terminal panel | normal: `` <C-/> ``, `` <C-_> ``, select: `` <C-/> ``, `` <C-_> ``, insert: `` <C-/> ``, `` <C-_> `` |
 | `toggle_file_explorer` | Toggle file explorer sidebar | normal: `` <space>e ``, select: `` <space>e `` |
 | `focus_file_explorer` | Focus file explorer sidebar | normal: `` <space>E ``, select: `` <space>E `` |
@@ -112,7 +119,7 @@
 | `symbol_picker` | Open symbol picker |  |
 | `syntax_symbol_picker` | Open symbol picker from syntax information |  |
 | `lsp_or_syntax_symbol_picker` | Open symbol picker from LSP or syntax information | normal: `` <space>s ``, select: `` <space>s `` |
-| `changed_file_picker` | Open changed file picker | normal: `` <space>g ``, select: `` <space>g `` |
+| `changed_file_picker` | Open changed file picker | normal: `` <space>g ``, `` <space>vg ``, select: `` <space>g ``, `` <space>vg `` |
 | `select_references_to_symbol_under_cursor` | Select symbol references | normal: `` <space>h ``, select: `` <space>h `` |
 | `workspace_symbol_picker` | Open workspace symbol picker |  |
 | `syntax_workspace_symbol_picker` | Open workspace symbol picker from syntax information |  |

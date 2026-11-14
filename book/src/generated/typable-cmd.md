@@ -87,6 +87,7 @@
 | `:pipe`, `:\|` | Pipe each selection to the shell command. |
 | `:pipe-to` | Pipe each selection to the shell command, ignoring output. |
 | `:terminal` | Open a new shell session in the bottom terminal panel, starting in the current file's directory or the working directory for scratch buffers. Ctrl-/ toggles the panel. |
+| `:lazygit` | Open lazygit in a floating terminal in the workspace root. Ctrl-g closes it. |
 | `:run-shell-command`, `:sh`, `:!` | Run a shell command |
 | `:reset-diff-change`, `:diffget`, `:diffg` | Reset the diff change at the cursor position. |
 | `:clear-register` | Clear given register. If no argument is provided, clear all registers. |

@@ -199,9 +199,13 @@ pub fn line_numbers<'doc>(
                         .folds(view_id)
                         .iter()
                         .any(|fold| text.char_to_line(fold.start) == line);
+                    // Probing every visible line for an unopened fold repeats syntax queries
+                    // on each redraw. As in Zed, only the cursor row gets that probe; closed
+                    // folds are a cheap ordered lookup.
+                    let openable = line == current_line && doc.fold_range_at_line(line).is_some();
                     out.push(if closed {
                         '▶'
-                    } else if doc.fold_range_at_line(line).is_some() {
+                    } else if openable {
                         '▼'
                     } else {
                         ' '

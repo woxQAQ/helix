@@ -73,11 +73,8 @@ async fn folding_nix_attributes_only_mark_multiline_constructs() -> anyhow::Resu
                 let pos = view
                     .screen_coords_at_pos(doc, doc.text().slice(..), doc.text().line_to_char(line))
                     .unwrap();
-                let expected = if matches!(line, 0 | 1 | 3 | 9 | 13 | 17) {
-                    "▼"
-                } else {
-                    " "
-                };
+                // Only the cursor row (line 0 here) gets the foldable probe.
+                let expected = if line == 0 { "▼" } else { " " };
                 assert_eq!(
                     surface[(chevron, inner.y + pos.row as u16)].symbol.as_str(),
                     expected,
@@ -134,23 +131,20 @@ async fn folding_nix_attributes_only_mark_multiline_constructs() -> anyhow::Resu
 #[tokio::test(flavor = "multi_thread")]
 async fn folding_language_queries_define_regions() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
-    for (name, source, headers, last) in [
+    for (name, source, last) in [
         (
             "bindings.nix",
             "let\n  flag = true;\n  settings = {\n    enable = true;\n  };\nin settings\n",
-            &[0, 2][..],
             5,
         ),
         (
             "view.blade.php",
             "@if ($show)\n  <div>\n    hello\n  </div>\n@endif\n",
-            &[0, 1][..],
             4,
         ),
         (
             "document.tex",
             "\\begin{document}\nhello\n\\end{document}\n",
-            &[0][..],
             2,
         ),
     ] {
@@ -176,7 +170,8 @@ async fn folding_language_queries_define_regions() -> anyhow::Result<()> {
         for line in 0..=last {
             assert_eq!(
                 surface[(chevron, inner.y + line as u16)].symbol.as_str(),
-                if headers.contains(&line) { "▼" } else { " " },
+                // Only the cursor row (line 0 here) gets the foldable probe.
+                if line == 0 { "▼" } else { " " },
                 "incorrect fold marker in {name} on line {}",
                 line + 1
             );
@@ -231,6 +226,11 @@ async fn folding_go_statement_lists_do_not_fold_from_the_first_statement() -> an
                 .with_config(config)
                 .with_file(&path, None)
                 .build()?;
+            {
+                // Put the cursor on a foldable line so the gutter probe renders ▼ there.
+                let (view, doc) = helix_view::current!(app.editor);
+                doc.set_selection(view.id, Selection::point(doc.text().line_to_char(5)));
+            }
             let area = Rect::new(3, 2, 100, 25);
             let mut compositor = Compositor::new(area);
             compositor.push(Box::new(EditorView::new(Keymaps::new(Box::new(
@@ -247,20 +247,12 @@ async fn folding_go_statement_lists_do_not_fold_from_the_first_statement() -> an
             let (view, doc) = current_ref!(cx.editor);
             let inner = view.inner_area(doc);
             let chevron = view.fold_toggle_column(doc).unwrap();
-            for (line, expected) in [
-                (4, " "),
-                (6, " "),
-                (9, " "),
-                (0, " "),
-                (2, "▼"),
-                (3, "▼"),
-                (5, "▼"),
-                (8, "▼"),
-                (12, " "),
-            ] {
+            for line in [4, 6, 9, 0, 2, 3, 5, 8, 12] {
                 let pos = view
                     .screen_coords_at_pos(doc, doc.text().slice(..), doc.text().line_to_char(line))
                     .unwrap();
+                // Only the cursor row (line 5 here) gets the foldable probe.
+                let expected = if line == 5 { "▼" } else { " " };
                 assert_eq!(
                     surface[(chevron, inner.y + pos.row as u16)].symbol.as_str(),
                     expected,

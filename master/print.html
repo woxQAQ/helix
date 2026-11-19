@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "colibri";
             const default_dark_theme = "colibri";
-            window.path_to_searchindex_js = "searchindex-af57ac08.js";
+            window.path_to_searchindex_js = "searchindex-650ac666.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c2fa7ea4.js"></script>
@@ -1739,6 +1739,7 @@ space.B = ":echo %sh{git blame -L %{cursor_line},+1 %{buffer_name}}"
 <tr><td><code>:pipe</code>, <code>:|</code></td><td>Pipe each selection to the shell command.</td></tr>
 <tr><td><code>:pipe-to</code></td><td>Pipe each selection to the shell command, ignoring output.</td></tr>
 <tr><td><code>:terminal</code></td><td>Open a new shell session in the bottom terminal panel, starting in the current file’s directory or the working directory for scratch buffers. Ctrl-/ toggles the panel.</td></tr>
+<tr><td><code>:lazygit</code></td><td>Open lazygit in a floating terminal in the workspace root. Ctrl-g closes it.</td></tr>
 <tr><td><code>:run-shell-command</code>, <code>:sh</code>, <code>:!</code></td><td>Run a shell command</td></tr>
 <tr><td><code>:reset-diff-change</code>, <code>:diffget</code>, <code>:diffg</code></td><td>Reset the diff change at the cursor position.</td></tr>
 <tr><td><code>:clear-register</code></td><td>Clear given register. If no argument is provided, clear all registers.</td></tr>
@@ -1829,6 +1830,10 @@ space.B = ":echo %sh{git blame -L %{cursor_line},+1 %{buffer_name}}"
 <tr><td><code>page_cursor_half_up</code></td><td>Move page and cursor half up</td><td>normal: <code>&lt;C-u&gt;</code>, <code>Z&lt;C-u&gt;</code>, <code>z&lt;C-u&gt;</code>, <code>Z&lt;backspace&gt;</code>, <code>z&lt;backspace&gt;</code>, select: <code>&lt;C-u&gt;</code>, <code>Z&lt;C-u&gt;</code>, <code>z&lt;C-u&gt;</code>, <code>Z&lt;backspace&gt;</code>, <code>z&lt;backspace&gt;</code></td></tr>
 <tr><td><code>page_cursor_half_down</code></td><td>Move page and cursor half down</td><td>normal: <code>&lt;C-d&gt;</code>, <code>Z&lt;C-d&gt;</code>, <code>z&lt;C-d&gt;</code>, <code>Z&lt;space&gt;</code>, <code>z&lt;space&gt;</code>, select: <code>&lt;C-d&gt;</code>, <code>Z&lt;C-d&gt;</code>, <code>z&lt;C-d&gt;</code>, <code>Z&lt;space&gt;</code>, <code>z&lt;space&gt;</code></td></tr>
 <tr><td><code>select_all</code></td><td>Select whole document</td><td>normal: <code>%</code>, select: <code>%</code></td></tr>
+<tr><td><code>fold</code></td><td>Fold selections or the current syntax node</td><td>normal: <code>Zf</code>, <code>zf</code>, select: <code>Zf</code>, <code>zf</code></td></tr>
+<tr><td><code>unfold</code></td><td>Open folds at the cursors</td><td>normal: <code>Zo</code>, <code>zo</code>, select: <code>Zo</code>, <code>zo</code></td></tr>
+<tr><td><code>toggle_fold</code></td><td>Toggle folds at the cursors</td><td>normal: <code>Za</code>, <code>za</code>, select: <code>Za</code>, <code>za</code></td></tr>
+<tr><td><code>unfold_all</code></td><td>Open all folds in this view</td><td>normal: <code>ZR</code>, <code>zR</code>, select: <code>ZR</code>, <code>zR</code></td></tr>
 <tr><td><code>select_regex</code></td><td>Select all regex matches inside selections</td><td>normal: <code>s</code>, select: <code>s</code></td></tr>
 <tr><td><code>split_selection</code></td><td>Split selections on regex matches</td><td>normal: <code>S</code>, select: <code>S</code></td></tr>
 <tr><td><code>split_selection_on_newline</code></td><td>Split selection on newlines</td><td>normal: <code>&lt;A-s&gt;</code>, select: <code>&lt;A-s&gt;</code></td></tr>
@@ -1864,6 +1869,9 @@ space.B = ":echo %sh{git blame -L %{cursor_line},+1 %{buffer_name}}"
 <tr><td><code>file_picker</code></td><td>Open file picker</td><td>normal: <code>&lt;space&gt;f</code>, select: <code>&lt;space&gt;f</code></td></tr>
 <tr><td><code>file_picker_in_current_buffer_directory</code></td><td>Open file picker at current buffer’s directory</td><td></td></tr>
 <tr><td><code>file_picker_in_current_directory</code></td><td>Open file picker at current working directory</td><td>normal: <code>&lt;space&gt;F</code>, select: <code>&lt;space&gt;F</code></td></tr>
+<tr><td><code>toggle_inline_blame</code></td><td>Toggle inline Git blame for the current line</td><td>normal: <code>&lt;space&gt;vb</code>, select: <code>&lt;space&gt;vb</code></td></tr>
+<tr><td><code>show_diff_hunk</code></td><td>Toggle inline diff hunk at the cursor</td><td>normal: <code>&lt;space&gt;vh</code>, select: <code>&lt;space&gt;vh</code></td></tr>
+<tr><td><code>lazygit</code></td><td>Open lazygit in a floating terminal</td><td>normal: <code>&lt;space&gt;l</code>, <code>&lt;space&gt;vl</code>, select: <code>&lt;space&gt;l</code>, <code>&lt;space&gt;vl</code></td></tr>
 <tr><td><code>toggle_terminal</code></td><td>Show or hide the terminal panel</td><td>normal: <code>&lt;C-/&gt;</code>, <code>&lt;C-_&gt;</code>, select: <code>&lt;C-/&gt;</code>, <code>&lt;C-_&gt;</code>, insert: <code>&lt;C-/&gt;</code>, <code>&lt;C-_&gt;</code></td></tr>
 <tr><td><code>toggle_file_explorer</code></td><td>Toggle file explorer sidebar</td><td>normal: <code>&lt;space&gt;e</code>, select: <code>&lt;space&gt;e</code></td></tr>
 <tr><td><code>focus_file_explorer</code></td><td>Focus file explorer sidebar</td><td>normal: <code>&lt;space&gt;E</code>, select: <code>&lt;space&gt;E</code></td></tr>
@@ -1876,7 +1884,7 @@ space.B = ":echo %sh{git blame -L %{cursor_line},+1 %{buffer_name}}"
 <tr><td><code>symbol_picker</code></td><td>Open symbol picker</td><td></td></tr>
 <tr><td><code>syntax_symbol_picker</code></td><td>Open symbol picker from syntax information</td><td></td></tr>
 <tr><td><code>lsp_or_syntax_symbol_picker</code></td><td>Open symbol picker from LSP or syntax information</td><td>normal: <code>&lt;space&gt;s</code>, select: <code>&lt;space&gt;s</code></td></tr>
-<tr><td><code>changed_file_picker</code></td><td>Open changed file picker</td><td>normal: <code>&lt;space&gt;g</code>, select: <code>&lt;space&gt;g</code></td></tr>
+<tr><td><code>changed_file_picker</code></td><td>Open changed file picker</td><td>normal: <code>&lt;space&gt;g</code>, <code>&lt;space&gt;vg</code>, select: <code>&lt;space&gt;g</code>, <code>&lt;space&gt;vg</code></td></tr>
 <tr><td><code>select_references_to_symbol_under_cursor</code></td><td>Select symbol references</td><td>normal: <code>&lt;space&gt;h</code>, select: <code>&lt;space&gt;h</code></td></tr>
 <tr><td><code>workspace_symbol_picker</code></td><td>Open workspace symbol picker</td><td></td></tr>
 <tr><td><code>syntax_workspace_symbol_picker</code></td><td>Open workspace symbol picker from syntax information</td><td></td></tr>

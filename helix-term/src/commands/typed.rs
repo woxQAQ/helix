@@ -1079,8 +1079,10 @@ fn cquit(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow
         .and_then(|code| code.parse::<i32>().ok())
         .unwrap_or(1);
 
+    // Set the code after quitting, otherwise a failed :cq can make :q! fail with the wrong exit code
+    quit_all_impl(cx, false)?;
     cx.editor.exit_code = exit_code;
-    quit_all_impl(cx, false)
+    Ok(())
 }
 
 fn force_cquit(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
@@ -2119,7 +2121,14 @@ fn debug_eval(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> a
 
         // TODO: support no frame_id
 
-        let frame_id = debugger.stack_frames[&thread_id][frame].id;
+        let Some(frame_id) = debugger
+            .stack_frames
+            .get(&thread_id)
+            .and_then(|frames| frames.get(frame))
+            .map(|frame| frame.id)
+        else {
+            bail!("No stack frame {frame} for thread {thread_id}");
+        };
         let response = helix_lsp::block_on(debugger.eval(args.join(" "), Some(frame_id)))?;
         cx.editor.set_status(response.result);
     }
@@ -2325,6 +2334,7 @@ fn toggle_option(
                 .map(|res| res.map(|token| token.content))
                 .collect::<Result<_, _>>()
                 .map_err(|err| anyhow!("failed to parse values: {err}"))?;
+            ensure!(!values.is_empty(), "No values given for `{key}`");
 
             Value::String(
                 values
@@ -2354,6 +2364,7 @@ fn toggle_option(
                 .into_iter()
                 .collect::<Result<_, _>>()
                 .map_err(|err| anyhow!("failed to parse value: {err}"))?;
+            ensure!(!values.is_empty(), "No values given for `{key}`");
 
             if let Some(wrongly_typed_value) = values
                 .iter()
@@ -2863,6 +2874,8 @@ fn move_buffer_impl(
         .map(ToOwned::to_owned)
         .context("Scratch buffer cannot be moved. Use :write instead")?;
 
+    // A bare file name has an empty parent, and `~` has to be expanded before it is checked.
+    let new_path = helix_stdx::path::canonicalize(new_path);
     // if new_path is a directory, append the original file name
     // to move the file into that directory.
     let new_path = old_path
@@ -2883,6 +2896,15 @@ fn move_buffer_impl(
                 }
             }
         }
+    }
+
+    // A case-only rename on a case-insensitive filesystem names the same file, so compare
+    // file identity rather than paths.
+    if !options.force
+        && new_path.symlink_metadata().is_ok()
+        && !same_file::is_same_file(&old_path, &new_path).unwrap_or(false)
+    {
+        bail!("can't move file, destination exists (use :mv! to overwrite it)");
     }
 
     if let Err(err) = cx.editor.move_path(&old_path, new_path.as_ref()) {
@@ -4209,12 +4231,17 @@ pub(super) fn execute_command(
 
 #[allow(clippy::unnecessary_unwrap)]
 pub(super) fn command_mode(cx: &mut Context) {
+    // Keep the register selected before `:` (as in `"a:yank-join`) for the typed command.
+    let register = cx.register;
     let mut prompt = Prompt::new(
         ":".into(),
         Some(':'),
         complete_command_line,
         move |cx: &mut compositor::Context, input: &str, event: PromptEvent| {
-            if let Err(err) = execute_command_line(cx, input, event) {
+            cx.editor.selected_register = register;
+            let res = execute_command_line(cx, input, event);
+            cx.editor.selected_register = None;
+            if let Err(err) = res {
                 cx.editor.set_error(err.to_string());
             }
         },

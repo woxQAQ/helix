@@ -323,6 +323,9 @@ async fn folding_marker_is_visible_in_line_numbers() -> anyhow::Result<()> {
     for soft_wrap in [false, true] {
         let mut config = test_config();
         config.editor.soft_wrap.enable = Some(soft_wrap);
+        // Force the true-color default theme: theme detection would pick the
+        // 16-color base16 theme on CI runners, which has no `ui.text` fg.
+        config.editor.true_color = true;
         let mut app = AppBuilder::new()
             .with_config(config)
             .with_input_text("#[head\nhidden 中文\nhidden two|]#\ntail\n")

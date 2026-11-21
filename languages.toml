@@ -2216,7 +2216,7 @@ language-servers = [ "docker-langserver", "docker-language-server" ]
 
 [[grammar]]
 name = "dockerfile"
-source = { git = "https://github.com/camdencheek/tree-sitter-dockerfile", rev = "971acdd908568b4531b0ba28a445bf0bb720aba5" }
+source = { git = "https://github.com/woxQAQ/tree-sitter-dockerfile", rev = "a2eada02ea3edfd160f9357e88b85c68ad124f34" }
 
 [[language]]
 name = "docker-compose"

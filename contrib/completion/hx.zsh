@@ -22,6 +22,7 @@ _hx() {
 		"-w[Specify initial working directory]" \
 		"--working-dir[Specify initial working directory]" \
 		"--log[Specifies a file to use for logging]" \
+		"--trace[Records an editor performance trace to a new file]:file:_files" \
 		"*:file:_files"
 
 	case "$state" in

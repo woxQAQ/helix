@@ -13,8 +13,8 @@ var skips = [ "--tutor" "--help" "--version" "-V" "--health" ]
 ### Grammar commands
 var grammar = [ "--grammar" "-g" ]
 
-### Config commands
-var config = [ "--config" "-c" ]
+### Options taking a file path
+var file-options = [ "--config" "-c" "--log" "--trace" ]
 
 ### Set an arg-completer for the `hx` binary
 set edit:completion:arg-completer[hx] = {|@args|
@@ -31,13 +31,7 @@ set edit:completion:arg-completer[hx] = {|@args|
       $candidate "build" "Build the tree-sitter grammars"
       return
     }
-    # When we have --config, we need a file
-    if (has-values $config $args[-2]) {
-      edit:complete-filename $args[-1] | each { |v| put $v[stem] }
-      return
-    }
-    # When we have --log, we need a file
-    if (has-values "log" $args[-2]) {
+    if (has-value $file-options $args[-2]) {
       edit:complete-filename $args[-1] | each { |v| put $v[stem] }
       return
     }
@@ -52,5 +46,6 @@ set edit:completion:arg-completer[hx] = {|@args|
   $candidate "--vsplit" "(Splits all given files vertically)"
   $candidate "--hsplit" "(Splits all given files horizontally)"
   $candidate "--config" "(Specifies a file to use for configuration)"
+  $candidate "--trace" "(Records an editor performance trace to a new file)"
   $candidate "--log" "(Specifies a file to write log data into)"
 }

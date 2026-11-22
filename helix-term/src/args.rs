@@ -17,6 +17,7 @@ pub struct Args {
     pub split: Option<Layout>,
     pub verbosity: u64,
     pub log_file: Option<PathBuf>,
+    pub trace_file: Option<PathBuf>,
     pub config_file: Option<PathBuf>,
     pub files: IndexMap<PathBuf, Vec<Position>>,
     pub working_directory: Option<PathBuf>,
@@ -72,6 +73,10 @@ impl Args {
                 "-c" | "--config" => match argv.next().as_deref() {
                     Some(path) => args.config_file = Some(path.into()),
                     None => anyhow::bail!("--config must specify a path to read"),
+                },
+                "--trace" => match argv.next().as_deref() {
+                    Some(path) => args.trace_file = Some(path.into()),
+                    None => anyhow::bail!("--trace must specify a path to write"),
                 },
                 "--log" => match argv.next().as_deref() {
                     Some(path) => args.log_file = Some(path.into()),

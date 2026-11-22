@@ -182,6 +182,7 @@ impl Compositor {
     }
 
     pub fn render(&mut self, area: Rect, surface: &mut Surface, cx: &mut Context) {
+        let _span = crate::trace::span("Compositor::render");
         for layer in &mut self.layers {
             layer.render(area, surface, cx);
         }

@@ -359,7 +359,9 @@ impl<'a> TextRenderer<'a> {
             Grapheme::Other { ref g } if g == "\u{00A0}" => Cow::Borrowed(nbsp),
             Grapheme::Other { ref g } if g == "\u{202F}" => Cow::Borrowed(nnbsp),
             // The fast cell writer preserves bytes, so escape controls before rendering.
-            Grapheme::Other { ref g } if g.chars().next().is_some_and(char::is_control) => "�",
+            Grapheme::Other { ref g } if g.chars().next().is_some_and(char::is_control) => {
+                Cow::Borrowed("�")
+            }
             Grapheme::Other { ref g } => render_grapheme(g),
             Grapheme::Newline => Cow::Borrowed(self.newline.as_str()),
         };

@@ -98,6 +98,7 @@ impl Application {
         lang_loader: syntax::Loader,
         workspace_trust: helix_loader::workspace_trust::WorkspaceTrust,
     ) -> Result<Self, Error> {
+        let _span = crate::trace::span("Application::new");
         #[cfg(feature = "integration")]
         setup_integration_logging();
 
@@ -261,6 +262,7 @@ impl Application {
     }
 
     async fn render(&mut self) {
+        let _frame = crate::trace::span("Application::render");
         if self.compositor.full_redraw {
             self.terminal.clear().expect("Cannot clear the terminal");
             self.compositor.full_redraw = false;
@@ -290,6 +292,7 @@ impl Application {
         self.editor.cursor_cache.reset();
 
         let pos = pos.map(|pos| (pos.col as u16, pos.row as u16));
+        let _draw = crate::trace::span("Terminal::draw");
         self.terminal.draw(pos, kind).unwrap();
     }
 
@@ -665,6 +668,7 @@ impl Application {
 
     #[inline(always)]
     pub async fn handle_editor_event(&mut self, event: EditorEvent) -> bool {
+        let _span = crate::trace::span("Application::handle_editor_event");
         log::debug!("received editor event: {:?}", event);
 
         match event {
@@ -706,6 +710,7 @@ impl Application {
     }
 
     pub async fn handle_terminal_events(&mut self, event: std::io::Result<TerminalEvent>) {
+        let _span = crate::trace::span("Application::handle_terminal_events");
         #[cfg(not(windows))]
         use termina::escape::csi;
 
@@ -793,6 +798,7 @@ impl Application {
         call: helix_lsp::Call,
         server_id: LanguageServerId,
     ) {
+        let _span = crate::trace::span("Application::handle_language_server_message");
         use helix_lsp::{Call, MethodCall, Notification};
 
         macro_rules! language_server {

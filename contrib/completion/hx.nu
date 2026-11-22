@@ -22,6 +22,7 @@ export extern hx [
     --config(-c): glob,                         # Specifies a file to use for configuration
     -v,                                         # Increases logging verbosity each use for up to 3 times
     --log: glob,                                # Specifies a file to use for logging
+    --trace: path,                              # Records an editor performance trace to a new file
     --version(-V),                              # Prints version information
     --vsplit,                                   # Splits all given files vertically into different windows
     --hsplit,                                   # Splits all given files horizontally into different windows

@@ -59,12 +59,17 @@ impl FileWatcher {
                                     .unwrap()
                                     .extend(event.paths.iter().cloned());
                             }
+                            // Only directories change the set of watched paths. Re-registering
+                            // for plain file churn is not just wasted work: on macOS the watcher
+                            // is a single FSEvent stream that restarts on every watch change,
+                            // and events are dropped while the stream is down.
                             if matches!(
                                 event.kind,
                                 notify::EventKind::Create(_)
                                     | notify::EventKind::Remove(_)
                                     | notify::EventKind::Modify(notify::event::ModifyKind::Name(_))
-                            ) {
+                            ) && event.paths.iter().any(|path| path.is_dir())
+                            {
                                 let _ = registration_sender.try_send(());
                             }
                             let _ = changes.try_send(());
@@ -105,19 +110,23 @@ impl FileWatcher {
                     }
                 }
                 let retired = std::mem::take(&mut *retired.lock().unwrap());
+                // Batch the whole diff into one watch change: on macOS each individual
+                // watch/unwatch restarts the single FSEvent stream and drops the events
+                // emitted in between.
+                let mut paths = watcher.paths_mut();
                 for path in &watched {
                     if retired.iter().any(|removed| path.starts_with(removed)) {
-                        let _ = watcher.unwatch(path);
+                        let _ = paths.remove(path);
                     }
                 }
                 watched.retain(|path| !retired.iter().any(|removed| path.starts_with(removed)));
                 for path in watched.difference(&desired) {
-                    let _ = watcher.unwatch(path);
+                    let _ = paths.remove(path);
                 }
                 watched.retain(|path| desired.contains(path));
                 let added: Vec<_> = desired.difference(&watched).cloned().collect();
                 for path in added {
-                    match watcher.watch(&path, RecursiveMode::NonRecursive) {
+                    match paths.add(&path, RecursiveMode::NonRecursive) {
                         Ok(()) => (),
                         Err(err) => {
                             log::debug!("could not watch {}: {err}", path.display());
@@ -125,6 +134,9 @@ impl FileWatcher {
                         }
                     }
                     watched.insert(path);
+                }
+                if let Err(err) = paths.commit() {
+                    log::debug!("could not apply watch changes: {err}");
                 }
                 let _ = sender.try_send(());
             }

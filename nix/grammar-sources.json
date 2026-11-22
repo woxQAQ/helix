@@ -716,10 +716,10 @@
     }
   },
   "haskell": {
-    "hash": "sha256-0wmdbXHZbHkv4pTrB1fCbExx9E83l+zaocGa+SvQsZQ=",
+    "hash": "sha256-R4KAAaBoDUGuQtR2U+0xdB9iLclWBrm+/blqsCX5ZjQ=",
     "source": {
       "git": "https://github.com/tree-sitter/tree-sitter-haskell",
-      "rev": "0975ef72fc3c47b530309ca93937d7d143523628"
+      "rev": "97288e585b0bd44199720280d067fa35bacd81ff"
     }
   },
   "haskell-literate": {

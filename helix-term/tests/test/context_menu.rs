@@ -147,6 +147,9 @@ impl Harness {
         })
         .await?;
         self.keys("pwd<ret>")?;
+        // The shell reports its physical cwd, so resolve symlinks first: on
+        // macOS the tempdir lives under /var which links to /private/var.
+        let directory = directory.canonicalize()?;
         self.wait_for_terminal_text(&format!("\n{}\n", directory.display()))
             .await
     }

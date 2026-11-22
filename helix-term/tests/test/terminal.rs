@@ -66,7 +66,10 @@ async fn floating_terminal_forwards_input_renders_and_exits() -> anyhow::Result<
         .iter()
         .map(|cell| cell.symbol.as_str())
         .collect();
-    assert!(rendered.contains("1b 4f 41 1b 5b 5a 1b"));
+    assert!(
+        rendered.contains("1b 4f 41 1b 5b 5a 1b"),
+        "unexpected key bytes; screen:\n{rendered}"
+    );
     compositor.handle_event(&Event::Paste("hi".into()), &mut cx);
     wait_for(&mut compositor, &mut cx, &mut surface, "PASTE").await;
     let rendered: String = surface
@@ -74,7 +77,10 @@ async fn floating_terminal_forwards_input_renders_and_exits() -> anyhow::Result<
         .iter()
         .map(|cell| cell.symbol.as_str())
         .collect();
-    assert!(rendered.contains("1b 5b 32 30 30 7e 68 69 1b 5b 32 30 31 7e"));
+    assert!(
+        rendered.contains("1b 5b 32 30 30 7e 68 69 1b 5b 32 30 31 7e"),
+        "unexpected paste bytes; screen:\n{rendered}"
+    );
     compositor.handle_event(
         &Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
@@ -101,7 +107,10 @@ async fn floating_terminal_forwards_input_renders_and_exits() -> anyhow::Result<
         .iter()
         .map(|cell| cell.symbol.as_str())
         .collect();
-    assert!(rendered.contains("20 70"));
+    assert!(
+        rendered.contains("20 70"),
+        "unexpected resized terminal output; screen:\n{rendered}"
+    );
     compositor.handle_event(&Event::Key(parse_macro("q")?[0]), &mut cx);
     let callback = tokio::time::timeout(Duration::from_secs(10), cx.jobs.callbacks.recv())
         .await?

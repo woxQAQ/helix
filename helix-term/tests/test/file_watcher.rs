@@ -31,12 +31,20 @@ async fn keys(app: &mut Application, sequence: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+// Process spawning on loaded Windows runners is slow; give the git and
+// watcher hops generous room there.
+const TIMEOUT: Duration = if cfg!(windows) {
+    Duration::from_secs(30)
+} else {
+    Duration::from_secs(10)
+};
+
 async fn until(
     app: &mut Application,
     what: &str,
     ready: impl Fn(&Application) -> bool,
 ) -> anyhow::Result<()> {
-    tokio::time::timeout(Duration::from_secs(10), async {
+    tokio::time::timeout(TIMEOUT, async {
         let mut input = futures_util::stream::pending();
         loop {
             // Bound the wait for idleness: on macOS the shared workspace watch

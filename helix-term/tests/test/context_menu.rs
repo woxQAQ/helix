@@ -520,8 +520,11 @@ async fn terminal_panel_sessions_resize_and_exit_independently() -> anyhow::Resu
 #[tokio::test(flavor = "multi_thread")]
 async fn context_menu_buffer_targets_and_modified_buffer_protection() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
-    let first = directory.path().join("first.txt");
-    let second = directory.path().join("second.txt");
+    // Compare against canonicalized paths: the editor resolves the 8.3 short
+    // names Windows hands out via TMPDIR to their long form.
+    let base = helix_stdx::path::canonicalize(directory.path());
+    let first = base.join("first.txt");
+    let second = base.join("second.txt");
     std::fs::write(&first, "first\n")?;
     std::fs::write(&second, "second\n")?;
     let mut h = Harness::new(&first)?;
@@ -617,9 +620,12 @@ async fn context_menu_buffer_targets_and_modified_buffer_protection() -> anyhow:
 #[tokio::test(flavor = "multi_thread")]
 async fn context_menu_explorer_rename_split_and_confirm_delete() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
-    let first = directory.path().join("first.txt");
-    let second = directory.path().join("second.txt");
-    let renamed = directory.path().join("renamed.txt");
+    // Compare against canonicalized paths: the editor resolves the 8.3 short
+    // names Windows hands out via TMPDIR to their long form.
+    let base = helix_stdx::path::canonicalize(directory.path());
+    let first = base.join("first.txt");
+    let second = base.join("second.txt");
+    let renamed = base.join("renamed.txt");
     std::fs::write(&first, "first\n")?;
     std::fs::write(&second, "second\n")?;
     let mut h = Harness::new(&first)?;
@@ -659,8 +665,11 @@ async fn context_menu_explorer_rename_split_and_confirm_delete() -> anyhow::Resu
 #[tokio::test(flavor = "multi_thread")]
 async fn context_menu_directory_creation_and_buffer_reveal() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
-    let first = directory.path().join("first.txt");
-    let folder = directory.path().join("folder");
+    // Compare against canonicalized paths: the editor resolves the 8.3 short
+    // names Windows hands out via TMPDIR to their long form.
+    let base = helix_stdx::path::canonicalize(directory.path());
+    let first = base.join("first.txt");
+    let folder = base.join("folder");
     std::fs::create_dir(&folder)?;
     std::fs::write(&first, "first\n")?;
     let mut h = Harness::new(&first)?;

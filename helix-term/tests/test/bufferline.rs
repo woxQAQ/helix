@@ -19,11 +19,11 @@ use tui::buffer::Buffer;
 #[tokio::test(flavor = "multi_thread")]
 async fn bufferline_disambiguates_paths_and_keeps_tabs_clickable() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
+    // Compare against canonicalized paths: the editor resolves the 8.3 short
+    // names Windows hands out via TMPDIR to their long form.
+    let base = helix_stdx::path::canonicalize(directory.path());
     let labels = ["a/main.rs", "b/main.rs", "a/src/lib.rs", "b/src/lib.rs"];
-    let paths: Vec<_> = labels
-        .iter()
-        .map(|label| directory.path().join(label))
-        .collect();
+    let paths: Vec<_> = labels.iter().map(|label| base.join(label)).collect();
     for path in &paths {
         std::fs::create_dir_all(path.parent().unwrap())?;
         std::fs::write(path, "hello\n")?;
@@ -59,7 +59,11 @@ async fn bufferline_disambiguates_paths_and_keeps_tabs_clickable() -> anyhow::Re
     }
     compositor.render(area, &mut surface, &mut cx);
     let expected: String = labels.iter().map(|label| format!(" {label} ")).collect();
-    assert!(row_text(&surface).starts_with(&expected));
+    assert!(
+        row_text(&surface).starts_with(&expected),
+        "bufferline mismatch:\nexpected: {expected}\nactual:   {}",
+        row_text(&surface)
+    );
 
     let mut column = area.x;
     for (path, label) in paths.iter().zip(labels) {

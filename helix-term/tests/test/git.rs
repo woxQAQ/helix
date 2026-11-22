@@ -11,6 +11,14 @@ use helix_view::{current_ref, graphics::Rect, input::parse_macro};
 use std::{process::Command, time::Duration};
 use tui::buffer::Buffer;
 
+// Git operations spawn several subprocesses per hop; loaded Windows runners
+// stretch each of them well beyond the Linux timings.
+const TIMEOUT: Duration = if cfg!(windows) {
+    Duration::from_secs(30)
+} else {
+    Duration::from_secs(10)
+};
+
 #[tokio::test(flavor = "multi_thread")]
 async fn git_blame_and_hunk_workflow() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
@@ -74,7 +82,7 @@ async fn git_blame_and_hunk_workflow() -> anyhow::Result<()> {
     };
 
     keys("<space>vb", &mut compositor, &mut cx)?;
-    let callback = tokio::time::timeout(Duration::from_secs(10), cx.jobs.callbacks.recv())
+    let callback = tokio::time::timeout(TIMEOUT, cx.jobs.callbacks.recv())
         .await?
         .unwrap();
     cx.jobs
@@ -89,7 +97,7 @@ async fn git_blame_and_hunk_workflow() -> anyhow::Result<()> {
     compositor.render(area, &mut surface, &mut cx);
     assert!(!screen(&surface).contains("initial subject"));
     compositor.handle_event(&Event::IdleTimeout, &mut cx);
-    let callback = tokio::time::timeout(Duration::from_secs(10), cx.jobs.callbacks.recv())
+    let callback = tokio::time::timeout(TIMEOUT, cx.jobs.callbacks.recv())
         .await?
         .unwrap();
     cx.jobs
@@ -99,7 +107,7 @@ async fn git_blame_and_hunk_workflow() -> anyhow::Result<()> {
 
     // Wait for the real diff worker, then preview and navigate two separated hunks.
     keys("4jghiY<esc>gg", &mut compositor, &mut cx)?;
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(TIMEOUT, async {
         loop {
             let ready = current_ref!(cx.editor)
                 .1
@@ -192,7 +200,7 @@ async fn git_blame_and_hunk_workflow() -> anyhow::Result<()> {
     );
     // A result arriving after blame is disabled must not re-enable its display.
     keys("<space>vb<space>vb", &mut compositor, &mut cx)?;
-    let callback = tokio::time::timeout(Duration::from_secs(10), cx.jobs.callbacks.recv())
+    let callback = tokio::time::timeout(TIMEOUT, cx.jobs.callbacks.recv())
         .await?
         .unwrap();
     cx.jobs
@@ -206,7 +214,7 @@ async fn git_blame_and_hunk_workflow() -> anyhow::Result<()> {
     surface.reset();
     compositor.render(area, &mut surface, &mut cx);
     assert!(!screen(&surface).contains("-first"));
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(TIMEOUT, async {
         loop {
             let (_, doc) = current_ref!(cx.editor);
             if doc.diff_handle().is_some_and(|handle| {
@@ -235,7 +243,7 @@ async fn git_blame_and_hunk_workflow() -> anyhow::Result<()> {
         &mut cx,
     )?;
     compositor.handle_event(&Event::IdleTimeout, &mut cx);
-    let callback = tokio::time::timeout(Duration::from_secs(10), cx.jobs.callbacks.recv())
+    let callback = tokio::time::timeout(TIMEOUT, cx.jobs.callbacks.recv())
         .await?
         .unwrap();
     cx.jobs

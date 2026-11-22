@@ -200,7 +200,10 @@ async fn floating_terminal_answers_terminal_queries() -> anyhow::Result<()> {
     // answer the device attributes query.
     let rendered = child_output(
         None,
-        r"printf '\033[c\033[18t'; head -c 7 | od -An -tx1 | tr -d ' \n'; head -c 4 | od -An -tx1 | tr -d ' \n'",
+        // Query and consume one reply at a time: BSD head(1) buffers its
+        // input, so a head waiting for a short reply would swallow a second
+        // reply that is already in the pipe.
+        r"printf '\033[c'; head -c 7 | od -An -tx1 | tr -d ' \n'; printf '\033[18t'; head -c 4 | od -An -tx1 | tr -d ' \n'",
     )
     .await?;
     assert!(rendered.contains("1b5b3f313b3263"), "{rendered}");

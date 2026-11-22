@@ -355,11 +355,14 @@ async fn terminal_panel_statusline_stays_below_terminal_and_tracks_file_focus() 
 {
     // Keep the doc paths short enough for the split statuslines: the default
     // tempdir is a deep /var/folders path on macOS, whose tail (and with it the
-    // file name) is cut off in a narrowed pane. Inside the workspace the
-    // statusline renders a short relative path instead.
+    // file name) is cut off in a narrowed pane. A directory under target/ keeps
+    // the workspace-relative path short and stays invisible to the workspace
+    // file watch, so it adds no event churn for sibling tests.
+    let parent = helix_loader::find_workspace().0.join("target");
+    std::fs::create_dir_all(&parent)?;
     let directory = tempfile::Builder::new()
         .prefix("statusline-")
-        .tempdir_in(helix_loader::find_workspace().0)?;
+        .tempdir_in(parent)?;
     let first = directory.path().join("first.txt");
     let second = directory.path().join("second.txt");
     std::fs::write(&first, "first\n")?;

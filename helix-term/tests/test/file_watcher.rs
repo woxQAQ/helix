@@ -39,7 +39,15 @@ async fn until(
     tokio::time::timeout(Duration::from_secs(10), async {
         let mut input = futures_util::stream::pending();
         loop {
-            app.event_loop_until_idle(&mut input).await;
+            // Bound the wait for idleness: on macOS the shared workspace watch
+            // can keep the event stream busy with churn from sibling tests, and
+            // the readiness check would starve. Cancellation lands in the
+            // select, not in a handler.
+            let _ = tokio::time::timeout(
+                Duration::from_millis(500),
+                app.event_loop_until_idle(&mut input),
+            )
+            .await;
             if ready(app) {
                 break;
             }
@@ -156,11 +164,14 @@ async fn explorer_discovers_external_files_without_manual_refresh() -> anyhow::R
         let mut input = futures_util::stream::pending();
         loop {
             std::fs::write(&first, "updated\n")?;
-            app.event_loop_until_idle(&mut input).await;
+            let _ = tokio::time::timeout(
+                Duration::from_millis(500),
+                app.event_loop_until_idle(&mut input),
+            )
+            .await;
             if current_ref!(app.editor).1.text().to_string() == "updated\n" {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(200)).await;
         }
         Ok::<(), std::io::Error>(())
     })

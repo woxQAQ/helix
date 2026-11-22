@@ -160,7 +160,8 @@ async fn explorer_discovers_external_files_without_manual_refresh() -> anyhow::R
     std::fs::write(&second, "new file\n")?;
     // The directory watch is registered asynchronously after the explorer
     // opens; keep rewriting until it is in place and reports the change.
-    tokio::time::timeout(Duration::from_secs(10), async {
+    // Loaded CI runners stretch every hop of the watch-debounce-reload chain.
+    tokio::time::timeout(Duration::from_secs(30), async {
         let mut input = futures_util::stream::pending();
         loop {
             std::fs::write(&first, "updated\n")?;
@@ -176,7 +177,14 @@ async fn explorer_discovers_external_files_without_manual_refresh() -> anyhow::R
         Ok::<(), std::io::Error>(())
     })
     .await
-    .map_err(|_| anyhow::anyhow!("timed out waiting for the watched change to apply"))??;
+    .map_err(|_| {
+        let doc = current_ref!(app.editor).1;
+        anyhow::anyhow!(
+            "timed out waiting for the watched change to apply; doc text={:?} modified={}",
+            doc.text().to_string(),
+            doc.is_modified()
+        )
+    })??;
     keys(&mut app, "j<ret>").await?;
     assert_eq!(current_ref!(app.editor).1.path(), Some(second.as_path()));
     assert_eq!(current_ref!(app.editor).1.text().to_string(), "new file\n");

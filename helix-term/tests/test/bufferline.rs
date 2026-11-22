@@ -23,6 +23,13 @@ async fn bufferline_disambiguates_paths_and_keeps_tabs_clickable() -> anyhow::Re
     // names Windows hands out via TMPDIR to their long form.
     let base = helix_stdx::path::canonicalize(directory.path());
     let labels = ["a/main.rs", "b/main.rs", "a/src/lib.rs", "b/src/lib.rs"];
+    // The tab labels are built from path components, so they use the
+    // platform's separator.
+    let sep = std::path::MAIN_SEPARATOR;
+    let expected_labels: Vec<String> = labels
+        .iter()
+        .map(|label| label.replace('/', &sep.to_string()))
+        .collect();
     let paths: Vec<_> = labels.iter().map(|label| base.join(label)).collect();
     for path in &paths {
         std::fs::create_dir_all(path.parent().unwrap())?;
@@ -58,7 +65,10 @@ async fn bufferline_disambiguates_paths_and_keeps_tabs_clickable() -> anyhow::Re
         cx.editor.open(path, Action::Load)?;
     }
     compositor.render(area, &mut surface, &mut cx);
-    let expected: String = labels.iter().map(|label| format!(" {label} ")).collect();
+    let expected: String = expected_labels
+        .iter()
+        .map(|label| format!(" {label} "))
+        .collect();
     assert!(
         row_text(&surface).starts_with(&expected),
         "bufferline mismatch:\nexpected: {expected}\nactual:   {}",

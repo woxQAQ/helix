@@ -150,8 +150,31 @@ impl Harness {
         // The shell reports its physical cwd, so resolve symlinks first: on
         // macOS the tempdir lives under /var which links to /private/var.
         let directory = directory.canonicalize()?;
-        self.wait_for_terminal_text(&format!("\n{}\n", directory.display()))
-            .await
+        let directory = directory.display().to_string();
+        // A panel narrower than the path wraps it across rows, so compare with
+        // all whitespace removed instead of looking for a single line.
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                self.drain_callbacks();
+                self.render();
+                let area = self.panel_body().unwrap_or_default();
+                let surface = &self.surface;
+                let rendered: String = (area.y..area.bottom())
+                    .flat_map(|y| {
+                        (area.x..area.right())
+                            .map(move |x| surface.get(x, y).unwrap().symbol.as_str())
+                    })
+                    .collect();
+                let compact: String = rendered.split_whitespace().collect();
+                if compact.contains(&directory) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("terminal did not enter {directory:?}"))?;
+        Ok(())
     }
 
     fn session_tab(&self, number: u64) -> (u16, u16) {
@@ -359,19 +382,31 @@ async fn terminal_panel_statusline_stays_below_terminal_and_tracks_file_focus() 
         let second_tab = h.app.editor.tree.area().x + " first.txt ".width() as u16;
         h.click(MouseButton::Left, second_tab, h.area.y);
         assert_eq!(current_ref!(h.app.editor).1.path(), Some(second.as_path()));
-        assert!(row(&h, status_y).contains("second.txt"));
+        assert!(
+            row(&h, status_y).contains("second.txt"),
+            "statusline should show second.txt (sidebar={sidebar}): {:?}",
+            row(&h, status_y)
+        );
         assert!(!row(&h, status_y).contains("first.txt"));
         h.click(MouseButton::Left, h.area.x + 2, status_y);
         assert_eq!(current_ref!(h.app.editor).1.path(), Some(second.as_path()));
         h.app.editor.set_status("FOOTER_MESSAGE");
         h.render();
         assert!(row(&h, h.area.bottom() - 1).contains("FOOTER_MESSAGE"));
-        assert!(row(&h, status_y).contains("second.txt"));
+        assert!(
+            row(&h, status_y).contains("second.txt"),
+            "statusline should still show second.txt (sidebar={sidebar}): {:?}",
+            row(&h, status_y)
+        );
         let body = h.panel_body().unwrap();
         h.click(MouseButton::Left, body.x + 2, body.y + 1);
         h.keys("<C-g>")?;
         assert!(h.panel_body().is_none());
-        assert!(row(&h, status_y).contains("second.txt"));
+        assert!(
+            row(&h, status_y).contains("second.txt"),
+            "statusline after closing the panel should show second.txt (sidebar={sidebar}): {:?}",
+            row(&h, status_y)
+        );
         helpers::assert_status_not_error(&h.app.editor);
     }
     Ok(())

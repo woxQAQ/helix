@@ -31,7 +31,11 @@ async fn keys(app: &mut Application, sequence: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn until(app: &mut Application, ready: impl Fn(&Application) -> bool) -> anyhow::Result<()> {
+async fn until(
+    app: &mut Application,
+    what: &str,
+    ready: impl Fn(&Application) -> bool,
+) -> anyhow::Result<()> {
     tokio::time::timeout(Duration::from_secs(10), async {
         let mut input = futures_util::stream::pending();
         loop {
@@ -41,7 +45,8 @@ async fn until(app: &mut Application, ready: impl Fn(&Application) -> bool) -> a
             }
         }
     })
-    .await?;
+    .await
+    .map_err(|_| anyhow::anyhow!("timed out waiting for {what}"))?;
     Ok(())
 }
 
@@ -54,12 +59,12 @@ async fn external_atomic_replacement_updates_all_splits_and_survives_recreation(
     let mut app = helpers::AppBuilder::new().with_file(&path, None).build()?;
     keys(&mut app, "<C-w>vG").await?;
     // Let the initial watcher registration and snapshot settle before changing the file.
-    until(&mut app, |_| true).await?;
+    until(&mut app, "the editor to settle", |_| true).await?;
     tokio::time::sleep(Duration::from_millis(300)).await;
     let replacement = root.path().join("replacement");
     std::fs::write(&replacement, "short\n")?;
     std::fs::rename(&replacement, &path)?;
-    until(&mut app, |app| {
+    until(&mut app, "the watched change to apply", |app| {
         current_ref!(app.editor).1.text().to_string() == "short\n"
     })
     .await?;
@@ -68,9 +73,9 @@ async fn external_atomic_replacement_updates_all_splits_and_survives_recreation(
     assert_eq!(current_ref!(app.editor).1.text().to_string(), "short\n");
 
     std::fs::remove_file(&path)?;
-    until(&mut app, |_| true).await?;
+    until(&mut app, "the editor to settle", |_| true).await?;
     std::fs::write(&path, "recreated\n")?;
-    until(&mut app, |app| {
+    until(&mut app, "the watched change to apply", |app| {
         current_ref!(app.editor).1.text().to_string() == "recreated\n"
     })
     .await?;
@@ -102,12 +107,12 @@ async fn worktree_commit_refreshes_hunk_base_without_overwriting_unsaved_edits(
     let path = worktree.join("file.txt");
     let mut app = helpers::AppBuilder::new().with_file(&path, None).build()?;
     keys(&mut app, "iunsaved <esc>").await?;
-    until(&mut app, |_| true).await?;
+    until(&mut app, "the editor to settle", |_| true).await?;
     tokio::time::sleep(Duration::from_millis(300)).await;
     std::fs::write(&path, "committed\n")?;
     git(&worktree, &["add", "."])?;
     git(&worktree, &["commit", "-qm", "external"])?;
-    until(&mut app, |app| {
+    until(&mut app, "the watched change to apply", |app| {
         current_ref!(app.editor)
             .1
             .diff_handle()
@@ -122,7 +127,7 @@ async fn worktree_commit_refreshes_hunk_base_without_overwriting_unsaved_edits(
         .get_status()
         .is_some_and(|(message, _)| message.contains("unsaved edits preserved")));
     git(&worktree, &["switch", "-qc", "next"])?;
-    until(&mut app, |app| {
+    until(&mut app, "the watched change to apply", |app| {
         current_ref!(app.editor)
             .1
             .version_control_head()
@@ -143,11 +148,11 @@ async fn explorer_discovers_external_files_without_manual_refresh() -> anyhow::R
     std::fs::write(&first, "initial\n")?;
     let mut app = helpers::AppBuilder::new().with_file(&first, None).build()?;
     keys(&mut app, "<space>e").await?;
-    until(&mut app, |_| true).await?;
+    until(&mut app, "the editor to settle", |_| true).await?;
     tokio::time::sleep(Duration::from_millis(300)).await;
     std::fs::write(&second, "new file\n")?;
     std::fs::write(&first, "updated\n")?;
-    until(&mut app, |app| {
+    until(&mut app, "the watched change to apply", |app| {
         current_ref!(app.editor).1.text().to_string() == "updated\n"
     })
     .await?;

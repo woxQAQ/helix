@@ -23,7 +23,7 @@ async fn floating_terminal_forwards_input_renders_and_exits() -> anyhow::Result<
     let area = Rect::new(0, 0, 100, 30);
     let mut compositor = Compositor::new(area);
     let mut command = CommandBuilder::new("sh");
-    command.args(["-c", r"stty raw -echo; printf '\033[?1h\033[?2004h\033[?1000h\033[?1006h\033[31mREADY 界\033[0m\r\n'; dd bs=1 count=7 2>/dev/null | od -An -tx1; printf '\r\nKEYS\r\n'; dd bs=1 count=14 2>/dev/null | od -An -tx1; printf '\r\nPASTE\r\n'; dd bs=1 count=9 2>/dev/null | od -An -tx1; printf '\r\nMOUSE\r\n'; dd bs=1 count=1 2>/dev/null; stty size; printf '\r\nRESIZED\r\n'; dd bs=1 count=1 2>/dev/null"]);
+    command.args(["-c", r"stty raw -echo; printf '\033[?1h\033[?2004h\033[?1000h\033[?1006h\033[31mREADY 界\033[0m\r\n'; dd bs=1 count=7 2>/dev/null | od -An -tx1 | tr -d ' \n'; printf '\r\nKEYS\r\n'; dd bs=1 count=14 2>/dev/null | od -An -tx1 | tr -d ' \n'; printf '\r\nPASTE\r\n'; dd bs=1 count=9 2>/dev/null | od -An -tx1 | tr -d ' \n'; printf '\r\nMOUSE\r\n'; dd bs=1 count=1 2>/dev/null; stty size; printf '\r\nRESIZED\r\n'; dd bs=1 count=1 2>/dev/null"]);
     compositor.push(Box::new(FloatingTerminal::new(command, area, None)?));
     let mut cx = Context {
         editor: &mut app.editor,
@@ -67,7 +67,7 @@ async fn floating_terminal_forwards_input_renders_and_exits() -> anyhow::Result<
         .map(|cell| cell.symbol.as_str())
         .collect();
     assert!(
-        rendered.contains("1b 4f 41 1b 5b 5a 1b"),
+        rendered.contains("1b4f411b5b5a1b"),
         "unexpected key bytes; screen:\n{rendered}"
     );
     compositor.handle_event(&Event::Paste("hi".into()), &mut cx);
@@ -78,7 +78,7 @@ async fn floating_terminal_forwards_input_renders_and_exits() -> anyhow::Result<
         .map(|cell| cell.symbol.as_str())
         .collect();
     assert!(
-        rendered.contains("1b 5b 32 30 30 7e 68 69 1b 5b 32 30 31 7e"),
+        rendered.contains("1b5b3230307e68691b5b3230317e"),
         "unexpected paste bytes; screen:\n{rendered}"
     );
     compositor.handle_event(
@@ -199,11 +199,11 @@ async fn floating_terminal_answers_terminal_queries() -> anyhow::Result<()> {
     // answer the device attributes query.
     let rendered = child_output(
         None,
-        r"printf '\033[c\033[18t'; head -c 7 | od -An -tx1; head -c 4 | od -An -tx1",
+        r"printf '\033[c\033[18t'; head -c 7 | od -An -tx1 | tr -d ' \n'; head -c 4 | od -An -tx1 | tr -d ' \n'",
     )
     .await?;
-    assert!(rendered.contains("1b 5b 3f 31 3b 32 63"), "{rendered}");
-    assert!(rendered.contains("1b 5b 38 3b"), "{rendered}");
+    assert!(rendered.contains("1b5b3f313b3263"), "{rendered}");
+    assert!(rendered.contains("1b5b383b"), "{rendered}");
     Ok(())
 }
 

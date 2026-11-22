@@ -149,13 +149,23 @@ async fn explorer_discovers_external_files_without_manual_refresh() -> anyhow::R
     let mut app = helpers::AppBuilder::new().with_file(&first, None).build()?;
     keys(&mut app, "<space>e").await?;
     until(&mut app, "the editor to settle", |_| true).await?;
-    tokio::time::sleep(Duration::from_millis(300)).await;
     std::fs::write(&second, "new file\n")?;
-    std::fs::write(&first, "updated\n")?;
-    until(&mut app, "the watched change to apply", |app| {
-        current_ref!(app.editor).1.text().to_string() == "updated\n"
+    // The directory watch is registered asynchronously after the explorer
+    // opens; keep rewriting until it is in place and reports the change.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let mut input = futures_util::stream::pending();
+        loop {
+            std::fs::write(&first, "updated\n")?;
+            app.event_loop_until_idle(&mut input).await;
+            if current_ref!(app.editor).1.text().to_string() == "updated\n" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        Ok::<(), std::io::Error>(())
     })
-    .await?;
+    .await
+    .map_err(|_| anyhow::anyhow!("timed out waiting for the watched change to apply"))??;
     keys(&mut app, "j<ret>").await?;
     assert_eq!(current_ref!(app.editor).1.path(), Some(second.as_path()));
     assert_eq!(current_ref!(app.editor).1.text().to_string(), "new file\n");

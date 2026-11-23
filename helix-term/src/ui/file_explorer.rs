@@ -313,7 +313,6 @@ impl FileExplorer {
             .filter(|entry| entry.expanded)
             .map(|entry| entry.path.clone())
             .collect();
-        let selected = self.entries.get(self.selected).map(|entry| &entry.path);
         let mut unignored = HashMap::new();
         let entries = Self::children(&self.root, 0, editor, &mut unignored)?;
         let mut refreshed = Self {
@@ -334,14 +333,29 @@ impl FileExplorer {
             if expanded.contains(&refreshed.entries[index].path) {
                 refreshed.expand(index, editor)?;
             }
-            if Some(&refreshed.entries[index].path) == selected {
-                refreshed.selected = index;
-            }
             index += 1;
         }
-        refreshed.selected = refreshed
-            .selected
-            .min(refreshed.entries.len().saturating_sub(1));
+        if let Some(selected) = self.entries.get(self.selected) {
+            refreshed.selected = refreshed
+                .entries
+                .iter()
+                .position(|e| e.path == selected.path)
+                .unwrap_or_else(|| {
+                    // After deletion, follow the next surviving entry in the old display order.
+                    // Unrelated inserts or removals may have shifted all its row numbers.
+                    let rows: HashMap<_, _> = refreshed
+                        .entries
+                        .iter()
+                        .enumerate()
+                        .map(|(row, entry)| (&entry.path, row))
+                        .collect();
+                    self.entries[self.selected + 1..]
+                        .iter()
+                        .chain(self.entries[..self.selected].iter().rev())
+                        .find_map(|entry| rows.get(&entry.path).copied())
+                        .unwrap_or(0)
+                });
+        }
         refreshed.refresh_git_status(editor);
         *self = refreshed;
         Ok(())

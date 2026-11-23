@@ -168,15 +168,19 @@ async fn review_comments_render_below_code_and_follow_edits() -> anyhow::Result<
 #[tokio::test(flavor = "multi_thread")]
 async fn review_across_edits_history_and_closed_buffers() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
-    let path = dir.path().join("alpha.txt");
-    let other = dir.path().join("beta.txt");
+    let base = helix_stdx::path::canonicalize(dir.path());
+    let path = base.join("alpha.txt");
+    let other = base.join("beta.txt");
     std::fs::write(&path, "first\r\n中文\r\nthird\r\nlast\r\n")?;
     std::fs::write(&other, "other\n")?;
     let mut app = AppBuilder::new()
         .with_comments()
         .with_file(&path, None)
         .build()?;
-    let open_other = format!(":open {}<ret>:comment Other file<ret>", other.display());
+    let open_other = format!(
+        ":open '{}'<ret>:comment Other file<ret>",
+        other.display().to_string().replace('\'', "''")
+    );
     let report = |app: &Application| app.editor.review.as_ref().unwrap().report(&app.editor);
     test_key_sequences(&mut app, vec![
         (Some("<space>ncDiscard this<esc><space>ncOverview<ret>:2<ret><space>nc100% '%{buffer_name}'<ret>v2x<space>ncTwo lines<ret><esc>"), Some(&|app| {

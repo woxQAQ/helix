@@ -23,13 +23,7 @@ async fn bufferline_disambiguates_paths_and_keeps_tabs_clickable() -> anyhow::Re
     // names Windows hands out via TMPDIR to their long form.
     let base = helix_stdx::path::canonicalize(directory.path());
     let labels = ["a/main.rs", "b/main.rs", "a/src/lib.rs", "b/src/lib.rs"];
-    // The tab labels are built from path components, so they use the
-    // platform's separator.
-    let sep = std::path::MAIN_SEPARATOR;
-    let expected_labels: Vec<String> = labels
-        .iter()
-        .map(|label| label.replace('/', &sep.to_string()))
-        .collect();
+    let expected_labels = labels.map(|label| label.replace('/', std::path::MAIN_SEPARATOR_STR));
     let paths: Vec<_> = labels.iter().map(|label| base.join(label)).collect();
     for path in &paths {
         std::fs::create_dir_all(path.parent().unwrap())?;
@@ -76,7 +70,7 @@ async fn bufferline_disambiguates_paths_and_keeps_tabs_clickable() -> anyhow::Re
     );
 
     let mut column = area.x;
-    for (path, label) in paths.iter().zip(labels) {
+    for (path, label) in paths.iter().zip(&expected_labels) {
         compositor.handle_event(
             &Event::Mouse(MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
@@ -96,7 +90,8 @@ async fn bufferline_disambiguates_paths_and_keeps_tabs_clickable() -> anyhow::Re
         compositor.handle_event(&Event::Key(key), &mut cx);
         compositor.render(area, &mut surface, &mut cx);
     }
-    assert!(row_text(&surface).starts_with(" a/main.rs  b/main.rs  lib.rs "));
+    let [first, second, ..] = &expected_labels;
+    assert!(row_text(&surface).starts_with(&format!(" {first}  {second}  lib.rs ")));
     helpers::assert_status_not_error(cx.editor);
     Ok(())
 }

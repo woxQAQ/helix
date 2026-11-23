@@ -107,6 +107,7 @@ async fn worktree_commit_refreshes_hunk_base_without_overwriting_unsaved_edits(
     let worktree = root.path().join("worktree");
     std::fs::create_dir(&repo)?;
     git(&repo, &["init", "-q"])?;
+    std::fs::write(repo.join(".gitattributes"), "*.txt text eol=lf\n")?;
     std::fs::write(repo.join("file.txt"), "base\n")?;
     git(&repo, &["add", "."])?;
     git(&repo, &["commit", "-qm", "initial"])?;

@@ -236,7 +236,7 @@ impl Document {
             let mut notes: Vec<_> = self
                 .comments
                 .iter()
-                .filter(|c| !draft.is_some_and(|d| d.id == c.id))
+                .filter(|c| draft.is_none_or(|d| d.id != c.id))
                 .chain(draft)
                 .map(|comment| {
                     let target = comment.resolve(self);

@@ -36,6 +36,10 @@ async fn git_blame_and_hunk_workflow() -> anyhow::Result<()> {
         Ok(())
     };
     git(&["init", "-q"])?;
+    std::fs::write(
+        directory.path().join(".gitattributes"),
+        "*.txt text eol=lf\n",
+    )?;
     let nested = directory.path().join("中文 space");
     std::fs::create_dir(&nested)?;
     let path = nested.join("--file.txt");

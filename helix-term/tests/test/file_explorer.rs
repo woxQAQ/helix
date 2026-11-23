@@ -343,6 +343,8 @@ async fn sidebar_delete_requires_confirmation_and_refreshes() -> anyhow::Result<
                     assert!(first.exists());
                     assert!(!current_ref!(app.editor).1.is_modified());
                     helpers::assert_status_not_error(&app.editor);
+                    // Shift the rows ahead of the selection before confirming deletion.
+                    std::fs::write(directory.path().join("before.txt"), "before\n").unwrap();
                 }),
             ),
             (

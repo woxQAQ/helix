@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "colibri";
             const default_dark_theme = "colibri";
-            window.path_to_searchindex_js = "searchindex-318c2bfe.js";
+            window.path_to_searchindex_js = "searchindex-0e3db724.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c2fa7ea4.js"></script>
@@ -197,6 +197,25 @@ can be accessed via the command <code>hx --tutor</code> or <code>:tutor</code>.<
 <li><a href="./keymap.html#insert-mode">Insert mode</a>: For typing text directly into the document. Access by typing <code>i</code> in normal mode.</li>
 <li><a href="./keymap.html#select--extend-mode">Select/extend mode</a>: For making selections and performing operations on them. Access by typing <code>v</code> in normal mode.</li>
 </ul>
+<h2 id="reviewing-a-repository"><a class="header" href="#reviewing-a-repository">Reviewing a repository</a></h2>
+<p>Run <code>hx --comments .</code> to open the file picker and start a review session. Use normal editing commands, including <code>gd</code> for go-to-definition and <code>gr</code> for references when the language server supports them.</p>
+<p>Press <code>Space n</code> in Normal or Select mode to see the review menu. For a new comment, type the text and press <code>Enter</code> to add it or <code>Esc</code> to cancel.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Keys</th><th>Command</th><th>Action</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Space n c</code></td><td><code>:comment Check the error path</code></td><td>Comment on the current line or the primary multiline selection. For example, <code>2x</code> selects two lines.</td></tr>
+<tr><td><code>Space n p</code></td><td><code>:comments</code></td><td>Search all session comments. Press <code>Enter</code> to jump to the target or <code>Delete</code> to remove the highlighted comment.</td></tr>
+<tr><td><code>Space n y</code></td><td><code>:comments-yank</code></td><td>Copy the full report to the system clipboard.</td></tr>
+</tbody>
+</table>
+</div>
+<p>A block comment has a guide beside its source lines, running from the first line to the frame below the last. The frame header shows the inclusive range, such as <code>L12–L15</code>. In Normal mode, move through the frame with <code>j</code> and <code>k</code>, or click a comment row. Press <code>Enter</code>, <code>i</code>, or <code>Space n c</code> to edit its text directly inside the frame. Use the arrow keys to move the caret and <code>Alt-Enter</code> to insert a newline. <code>Enter</code> saves the draft and <code>Esc</code> cancels it. Press <code>Esc</code> on a comment row to return to the source cursor. Select mode continues to select source text across comments.</p>
+<p>Comment text wraps to the width of each split. The frame uses <code>ui.virtual.review</code> and the body uses <code>ui.text</code>. Copying and saving the source buffer includes only source text.</p>
+<p>Comment text is literal, including spaces, quotes and <code>%</code> expressions. Comments belong to the session and survive closing a file buffer. The report uses the current buffer’s line numbers, including unsaved edits. For closed buffers it uses their last reviewed text. A fully deleted target stays in the report with <code>(target removed)</code> beside its nearest position. Undoing the deletion in the same buffer restores the original anchor.</p>
+<p>Helix prints the report to stdout on exit. For example, <code>hx --comments . | save review.txt</code> in Nushell saves it for later. Each entry contains the path, a one-based line or inclusive line range when applicable, and the comment text.</p>
 <h2 id="buffers"><a class="header" href="#buffers">Buffers</a></h2>
 <p>Buffers are in-memory representations of files. You can have multiple buffers open at once. Use <a href="./pickers.html">pickers</a> or commands like <code>:buffer-next</code> and <code>:buffer-previous</code> to open buffers or switch between them.</p>
 <h2 id="selection-first-editing"><a class="header" href="#selection-first-editing">Selection-first editing</a></h2>

@@ -3062,6 +3062,14 @@ fn comment(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyh
     Ok(())
 }
 
+fn comments_clear(cx: &mut compositor::Context, _: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event == PromptEvent::Validate {
+        cx.editor.clear_review_comments()?;
+        cx.editor.set_status("Cleared review comments");
+    }
+    Ok(())
+}
+
 fn comments_yank(cx: &mut compositor::Context, _: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -3129,6 +3137,14 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         aliases: &[],
         doc: "Open the review comment picker. Press Enter to jump or Delete to remove the selected comment.",
         fun: comments,
+        completer: CommandCompleter::none(),
+        signature: Signature { positionals: (0, Some(0)), ..Signature::DEFAULT },
+    },
+    TypableCommand {
+        name: "comments-clear",
+        aliases: &[],
+        doc: "Delete all review comments in this session, including comments on closed buffers.",
+        fun: comments_clear,
         completer: CommandCompleter::none(),
         signature: Signature { positionals: (0, Some(0)), ..Signature::DEFAULT },
     },

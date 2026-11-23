@@ -74,10 +74,19 @@ async fn review_comments_render_below_code_and_follow_edits() -> anyhow::Result<
             .collect();
         Ok(rows)
     };
-    let creating = frame("2x<F4>new<A-ret>block")?;
+    let creating = frame("2x<F4>new<S-ret>block")?;
     assert!(creating[2].starts_with("├── L1–L2 "));
     assert!(creating[3].contains("new") && creating[4].contains("block"));
     assert_eq!(&frame("<esc>gg")?[..3], &["first", "second", "third"]);
+    let repeated = frame(":comment Keep<ret>:comment Remove<ret>jjjj")?;
+    assert_eq!(frame("d<esc>")?, repeated);
+    let deleted = frame("dd")?;
+    assert!(deleted[2].contains("Keep"));
+    assert_eq!(deleted[4], "second");
+    assert_eq!(
+        &frame(":comments-clear<ret>")?[..3],
+        &["first", "second", "third"]
+    );
     let rows = frame(":comment Overview<ret>:comment First note<ret>2x:comment Both lines<ret>:3<ret>:comment 检查这行 ABCDEFGHIJKLMNOPQRSTUVWXYZ<ret>")?;
     assert_eq!(rows[0], "╭first");
     assert!(rows[1].starts_with("│╭─ L1 "));
@@ -234,6 +243,21 @@ async fn review_across_edits_history_and_closed_buffers() -> anyhow::Result<()> 
             let anchor = helix_core::line_ending::line_end_char_index(&doc.text().slice(..), 3);
             let notes = doc.review_annotations(80).unwrap();
             assert_eq!(notes.rows_at(anchor).map(|row| row.text).collect::<Vec<_>>(), ["L4", "100% '%{buffer_name}'", ""]);
+        })),
+        (Some(":bc<ret>"), Some(&|app| {
+            assert!(app.editor.document_id_by_path(&path).is_none());
+            assert!(report(app).contains("alpha.txt"));
+            assert!(report(app).contains("beta.txt"));
+        })),
+        (Some("ggj<space>nD"), Some(&|app| {
+            assert!(report(app).is_empty());
+            let (view, doc) = current_ref!(app.editor);
+            assert!(doc.review_focus(view.id).is_none());
+            assert!(doc.review_annotations(80).is_none());
+            assert_eq!(doc.text().to_string(), "other\n");
+        })),
+        (Some("<space>ncFresh<S-ret>start<ret>"), Some(&|app| {
+            assert!(report(app).ends_with("beta.txt:1 — Fresh\nstart\n"));
         })),
     ], false).await
 }

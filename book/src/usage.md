@@ -25,9 +25,10 @@ Press `Space n` in Normal or Select mode to see the review menu. For a new comme
 | --- | --- | --- |
 | `Space n c` | `:comment Check the error path` | Comment on the current line or the primary multiline selection. For example, `2x` selects two lines. |
 | `Space n p` | `:comments` | Search all session comments. Press `Enter` to jump to the target or `Delete` to remove the highlighted comment. |
+| `Space n D` | `:comments-clear` | Delete all comments in the current session, including comments on closed buffers. |
 | `Space n y` | `:comments-yank` | Copy the full report to the system clipboard. |
 
-A block comment has a guide beside its source lines, running from the first line to the frame below the last. The frame header shows the inclusive range, such as `L12–L15`. In Normal mode, move through the frame with `j` and `k`, or click a comment row. Press `Enter`, `i`, or `Space n c` to edit its text directly inside the frame. Use the arrow keys to move the caret and `Alt-Enter` to insert a newline. `Enter` saves the draft and `Esc` cancels it. Press `Esc` on a comment row to return to the source cursor. Select mode continues to select source text across comments.
+A block comment has a guide beside its source lines, running from the first line to the frame below the last. The frame header shows the inclusive range, such as `L12–L15`. In Normal mode, move through the frame with `j` and `k`, or click a comment row. Press `dd` on the `L…` header to delete that comment. Press `Enter`, `i`, or `Space n c` to edit its text directly inside the frame. Use the arrow keys to move the caret and `Shift-Enter` or `Alt-Enter` to insert a newline. `Enter` saves the draft and `Esc` cancels it. Press `Esc` on a comment row to return to the source cursor. Select mode continues to select source text across comments.
 
 Comment text wraps to the width of each split. The frame uses `ui.virtual.review` and the body uses `ui.text`. Copying and saving the source buffer includes only source text.
 

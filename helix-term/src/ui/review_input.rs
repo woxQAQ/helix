@@ -1,7 +1,7 @@
 use crate::{
     alt,
     compositor::{Component, Context, Event, EventResult},
-    ctrl, key,
+    ctrl, key, shift,
     ui::{completers, Prompt},
 };
 use helix_core::Position;
@@ -74,7 +74,7 @@ impl Component for ReviewInput {
                     self.input.set_position(offset);
                 }
             }
-            Event::Key(alt!(Enter)) => self.input.insert_str("\n", cx.editor),
+            Event::Key(shift!(Enter) | alt!(Enter)) => self.input.insert_str("\n", cx.editor),
             Event::Paste(text) => self
                 .input
                 .insert_str(&text.replace("\r\n", "\n").replace('\r', "\n"), cx.editor),

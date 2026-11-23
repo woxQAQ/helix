@@ -9,6 +9,7 @@ pub(crate) fn add_review_bindings(keys: &mut HashMap<Mode, KeyTrie>) {
     let menu = keymap!({ "Review comments"
         "c" => review_comment,
         "p" => ":comments",
+        "D" => ":comments-clear",
         "y" => ":comments-yank",
     });
     for mode in [Mode::Normal, Mode::Select] {

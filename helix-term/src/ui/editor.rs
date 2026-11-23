@@ -1151,6 +1151,7 @@ impl EditorView {
                         | "move_visual_line_down"
                         | "review_comment"
                         | "comments"
+                        | "comments-clear"
                         | "comments-yank"
                         | "command_mode"
                 )
@@ -1229,8 +1230,26 @@ impl EditorView {
 
     fn command_mode(&mut self, mode: Mode, cxt: &mut commands::Context, event: KeyEvent) {
         let (view, doc) = current!(cxt.editor);
-        if doc.review_focus(view.id).is_some() && self.keymaps.pending().is_empty() {
+        if let Some(focus) = doc
+            .review_focus(view.id)
+            .filter(|_| self.keymaps.pending().is_empty())
+        {
             match event {
+                key!('d') if focus.row == 0 => {
+                    let origin = (view.id, doc.id());
+                    cxt.on_next_key(move |cx, key| {
+                        let (view, doc) = current!(cx.editor);
+                        if matches!(key, key!('d'))
+                            && (view.id, doc.id()) == origin
+                            && doc.review_focus(view.id) == Some(focus)
+                            && doc.remove_review_comment(focus.id)
+                        {
+                            doc.set_review_focus(view.id, None);
+                            cx.editor.set_status("Comment deleted");
+                        }
+                    });
+                    return;
+                }
                 key!(Enter) | key!('i') | key!('e') => {
                     commands::review_comment(cxt);
                     return;

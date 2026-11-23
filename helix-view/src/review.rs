@@ -59,6 +59,13 @@ pub(crate) struct Comment {
 }
 
 impl Comment {
+    fn remove(comments: &mut Vec<Self>, id: u64) -> bool {
+        let Some(index) = comments.iter().position(|comment| comment.id == id) else {
+            return false;
+        };
+        comments.remove(index);
+        true
+    }
     fn resolve(&self, doc: &Document) -> Anchor {
         let mut anchor = self.anchor;
         if let Some(committed) = doc.committed_changes_since(self.revision) {
@@ -69,6 +76,18 @@ impl Comment {
 }
 
 impl Editor {
+    pub fn clear_review_comments(&mut self) -> anyhow::Result<()> {
+        let review = self
+            .review
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Start Helix with --comments to review files"))?;
+        review.closed.clear();
+        for doc in self.documents_mut() {
+            doc.comments.clear();
+            doc.review_notes.take();
+        }
+        Ok(())
+    }
     pub fn add_review_comment(&mut self, text: String) -> anyhow::Result<()> {
         anyhow::ensure!(!text.trim().is_empty(), "Enter a comment");
         let comment = self.new_review_comment(text)?;
@@ -140,6 +159,13 @@ pub(crate) struct ReviewDraft {
 }
 
 impl Document {
+    pub fn remove_review_comment(&mut self, id: u64) -> bool {
+        let removed = Comment::remove(&mut self.comments, id);
+        if removed {
+            self.review_notes.take();
+        }
+        removed
+    }
     pub fn review_text(&self, id: u64) -> Option<&str> {
         self.comments
             .iter()
@@ -433,16 +459,8 @@ impl Entry {
     }
 
     pub fn remove(&self, editor: &mut Editor) -> bool {
-        let remove = |comments: &mut Vec<Comment>| {
-            let Some(index) = comments.iter().position(|comment| comment.id == self.id) else {
-                return false;
-            };
-            comments.remove(index);
-            true
-        };
         if let Some(doc) = editor.document_by_path_mut(&self.path) {
-            if remove(&mut doc.comments) {
-                doc.review_notes.take();
+            if doc.remove_review_comment(self.id) {
                 return true;
             }
         }
@@ -452,7 +470,7 @@ impl Entry {
         let Some((_, comments)) = review.closed.get_mut(&self.path) else {
             return false;
         };
-        let removed = remove(comments);
+        let removed = Comment::remove(comments, self.id);
         if comments.is_empty() {
             review.closed.remove(&self.path);
         }

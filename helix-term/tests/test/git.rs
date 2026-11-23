@@ -36,6 +36,8 @@ async fn git_blame_and_hunk_workflow() -> anyhow::Result<()> {
         Ok(())
     };
     git(&["init", "-q"])?;
+    // The nested file's attributes override the checkout default for its diff base.
+    git(&["config", "core.autocrlf", "true"])?;
     std::fs::write(
         directory.path().join(".gitattributes"),
         "*.txt text eol=lf\n",
@@ -111,19 +113,19 @@ async fn git_blame_and_hunk_workflow() -> anyhow::Result<()> {
 
     // Wait for the real diff worker, then preview and navigate two separated hunks.
     keys("4jghiY<esc>gg", &mut compositor, &mut cx)?;
+    let (_, doc) = current_ref!(cx.editor);
+    let handle = doc.diff_handle().expect("tracked file has a diff base");
     tokio::time::timeout(TIMEOUT, async {
-        loop {
-            let ready = current_ref!(cx.editor)
-                .1
-                .diff_handle()
-                .is_some_and(|handle| handle.load().len() == 2);
-            if ready {
-                break;
-            }
+        while handle.load().doc() != doc.text() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await?;
+    {
+        let diff = handle.load();
+        assert_eq!(diff.diff_base().to_string(), base);
+        assert_eq!(diff.len(), 2);
+    }
     keys("<space>vh", &mut compositor, &mut cx)?;
     compositor.render(area, &mut surface, &mut cx);
     let rendered = screen(&surface);

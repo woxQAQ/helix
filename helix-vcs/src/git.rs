@@ -68,7 +68,9 @@ pub fn get_diff_base(file: &Path, trust_full: bool) -> Result<Vec<u8>> {
     // trust level instead of letting gix re-derive it from `.git` ownership; see the note there.
     if let Some(work_dir) = repo.workdir() {
         let rela_path = file.strip_prefix(work_dir)?;
-        let rela_path = gix::path::try_into_bstr(rela_path)?;
+        // Git index paths use forward slashes when resolving .gitattributes.
+        let rela_path =
+            gix::path::to_unix_separators_on_windows(gix::path::try_into_bstr(rela_path)?);
         let (mut pipeline, _) = repo.filter_pipeline(None)?;
         let mut worktree_outcome =
             pipeline.convert_to_worktree(&data, rela_path.as_ref(), Delay::Forbid)?;

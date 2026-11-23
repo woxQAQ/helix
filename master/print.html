@@ -37,7 +37,7 @@
             const path_to_root = "";
             const default_light_theme = "colibri";
             const default_dark_theme = "colibri";
-            window.path_to_searchindex_js = "searchindex-0e3db724.js";
+            window.path_to_searchindex_js = "searchindex-4f396265.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c2fa7ea4.js"></script>
@@ -559,11 +559,12 @@ can be accessed via the command <code>hx --tutor</code> or <code>:tutor</code>.<
 <tbody>
 <tr><td><code>Space n c</code></td><td><code>:comment Check the error path</code></td><td>Comment on the current line or the primary multiline selection. For example, <code>2x</code> selects two lines.</td></tr>
 <tr><td><code>Space n p</code></td><td><code>:comments</code></td><td>Search all session comments. Press <code>Enter</code> to jump to the target or <code>Delete</code> to remove the highlighted comment.</td></tr>
+<tr><td><code>Space n D</code></td><td><code>:comments-clear</code></td><td>Delete all comments in the current session, including comments on closed buffers.</td></tr>
 <tr><td><code>Space n y</code></td><td><code>:comments-yank</code></td><td>Copy the full report to the system clipboard.</td></tr>
 </tbody>
 </table>
 </div>
-<p>A block comment has a guide beside its source lines, running from the first line to the frame below the last. The frame header shows the inclusive range, such as <code>L12–L15</code>. In Normal mode, move through the frame with <code>j</code> and <code>k</code>, or click a comment row. Press <code>Enter</code>, <code>i</code>, or <code>Space n c</code> to edit its text directly inside the frame. Use the arrow keys to move the caret and <code>Alt-Enter</code> to insert a newline. <code>Enter</code> saves the draft and <code>Esc</code> cancels it. Press <code>Esc</code> on a comment row to return to the source cursor. Select mode continues to select source text across comments.</p>
+<p>A block comment has a guide beside its source lines, running from the first line to the frame below the last. The frame header shows the inclusive range, such as <code>L12–L15</code>. In Normal mode, move through the frame with <code>j</code> and <code>k</code>, or click a comment row. Press <code>dd</code> on the <code>L…</code> header to delete that comment. Press <code>Enter</code>, <code>i</code>, or <code>Space n c</code> to edit its text directly inside the frame. Use the arrow keys to move the caret and <code>Shift-Enter</code> or <code>Alt-Enter</code> to insert a newline. <code>Enter</code> saves the draft and <code>Esc</code> cancels it. Press <code>Esc</code> on a comment row to return to the source cursor. Select mode continues to select source text across comments.</p>
 <p>Comment text wraps to the width of each split. The frame uses <code>ui.virtual.review</code> and the body uses <code>ui.text</code>. Copying and saving the source buffer includes only source text.</p>
 <p>Comment text is literal, including spaces, quotes and <code>%</code> expressions. Comments belong to the session and survive closing a file buffer. The report uses the current buffer’s line numbers, including unsaved edits. For closed buffers it uses their last reviewed text. A fully deleted target stays in the report with <code>(target removed)</code> beside its nearest position. Undoing the deletion in the same buffer restores the original anchor.</p>
 <p>Helix prints the report to stdout on exit. For example, <code>hx --comments . | save review.txt</code> in Nushell saves it for later. Each entry contains the path, a one-based line or inclusive line range when applicable, and the comment text.</p>
@@ -1674,6 +1675,7 @@ space.B = ":echo %sh{git blame -L %{cursor_line},+1 %{buffer_name}}"
 <tbody>
 <tr><td><code>:comment</code></td><td>Comment on the current line or multiline selection. For example, :comment Check the error path.</td></tr>
 <tr><td><code>:comments</code></td><td>Open the review comment picker. Press Enter to jump or Delete to remove the selected comment.</td></tr>
+<tr><td><code>:comments-clear</code></td><td>Delete all review comments in this session, including comments on closed buffers.</td></tr>
 <tr><td><code>:comments-yank</code></td><td>Copy the session’s review comments to the system clipboard.</td></tr>
 <tr><td><code>:exit</code>, <code>:x</code>, <code>:xit</code></td><td>Write changes to disk if the buffer is modified and then quit. Accepts an optional path (:exit some/path.txt).</td></tr>
 <tr><td><code>:exit!</code>, <code>:x!</code>, <code>:xit!</code></td><td>Force write changes to disk, creating necessary subdirectories, if the buffer is modified and then quit. Accepts an optional path (:exit! some/path.txt).</td></tr>

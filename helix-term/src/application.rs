@@ -56,7 +56,7 @@ use tui::backend::TestBackend;
 #[cfg(all(not(windows), not(feature = "integration")))]
 type TerminalBackend = TerminaBackend;
 #[cfg(all(windows, not(feature = "integration")))]
-type TerminalBackend = CrosstermBackend<std::io::Stdout>;
+type TerminalBackend = CrosstermBackend<Box<dyn std::io::Write + Send>>;
 #[cfg(feature = "integration")]
 type TerminalBackend = TestBackend;
 
@@ -94,7 +94,7 @@ fn setup_integration_logging() {
 impl Application {
     pub fn new(
         args: Args,
-        config: Config,
+        mut config: Config,
         lang_loader: syntax::Loader,
         workspace_trust: helix_loader::workspace_trust::WorkspaceTrust,
     ) -> Result<Self, Error> {
@@ -111,7 +111,15 @@ impl Application {
         let backend = TerminaBackend::new((&config.editor).into())
             .context("failed to create terminal backend")?;
         #[cfg(all(windows, not(feature = "integration")))]
-        let backend = CrosstermBackend::new(std::io::stdout(), (&config.editor).into());
+        let backend = {
+            let writer: Box<dyn std::io::Write + Send> =
+                if args.comments && !std::io::stdout().is_terminal() {
+                    Box::new(std::fs::OpenOptions::new().write(true).open("CONOUT$")?)
+                } else {
+                    Box::new(std::io::stdout())
+                };
+            CrosstermBackend::new(writer, (&config.editor).into())
+        };
 
         #[cfg(feature = "integration")]
         let backend = TestBackend::new(120, 150);
@@ -120,6 +128,9 @@ impl Application {
         let mut terminal = Terminal::new(backend)?;
         let area = terminal.size();
         let mut compositor = Compositor::new(area);
+        if args.comments {
+            crate::keymap::default::add_review_bindings(&mut config.keys);
+        }
         let config = Arc::new(ArcSwap::from_pointee(config));
         let handlers = handlers::setup(config.clone());
         let mut editor = Editor::new(
@@ -132,6 +143,7 @@ impl Application {
             handlers,
             workspace_trust,
         );
+        editor.review = args.comments.then(Default::default);
         Self::load_configured_theme(&mut editor, &config.load(), &mut terminal, theme_mode);
 
         let keys = Box::new(Map::new(Arc::clone(&config), |config: &Config| {
@@ -423,8 +435,11 @@ impl Application {
 
     fn refresh_config(&mut self) {
         let mut refresh_config = || -> Result<(), Error> {
-            let default_config = Config::load_default()
+            let mut default_config = Config::load_default()
                 .map_err(|err| anyhow::anyhow!("Failed to load config: {}", err))?;
+            if self.editor.review.is_some() {
+                crate::keymap::default::add_review_bindings(&mut default_config.keys);
+            }
 
             // Apply any change to editor.workspace_trust before reading local language config.
             self.editor

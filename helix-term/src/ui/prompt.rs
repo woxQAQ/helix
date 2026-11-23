@@ -112,6 +112,11 @@ impl Prompt {
         self.cursor
     }
 
+    pub(super) fn set_position(&mut self, position: usize) {
+        debug_assert!(self.line.is_char_boundary(position));
+        self.cursor = position;
+    }
+
     pub fn with_line(mut self, line: String, editor: &Editor) -> Self {
         self.set_line(line, editor);
         self

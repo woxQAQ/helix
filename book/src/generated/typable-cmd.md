@@ -1,5 +1,8 @@
 | Name | Description |
 | --- | --- |
+| `:comment` | Comment on the current line or multiline selection. For example, :comment Check the error path. |
+| `:comments` | Open the review comment picker. Press Enter to jump or Delete to remove the selected comment. |
+| `:comments-yank` | Copy the session's review comments to the system clipboard. |
 | `:exit`, `:x`, `:xit` | Write changes to disk if the buffer is modified and then quit. Accepts an optional path (:exit some/path.txt). |
 | `:exit!`, `:x!`, `:xit!` | Force write changes to disk, creating necessary subdirectories, if the buffer is modified and then quit. Accepts an optional path (:exit! some/path.txt). |
 | `:quit`, `:q` | Close the current view. |

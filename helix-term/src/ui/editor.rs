@@ -194,6 +194,12 @@ impl EditorView {
 
         let view_offset = doc.view_offset(view.id);
 
+        let caret = is_focused
+            .then(|| doc.review_caret(view.id, inner.width))
+            .flatten();
+        let review_focus = caret
+            .map(|(focus, _)| focus)
+            .or_else(|| is_focused.then(|| doc.review_focus(view.id)).flatten());
         let text_annotations = view.text_annotations(doc, Some(theme));
         let mut decorations = DecorationManager::default();
 
@@ -267,14 +273,16 @@ impl EditorView {
             if let Some(tabstops) = Self::tabstop_highlights(doc, theme) {
                 overlays.push(tabstops);
             }
-            overlays.push(Self::doc_selection_highlights(
-                editor.mode(),
-                doc,
-                view,
-                theme,
-                &config.cursor_shape,
-                self.terminal_focused,
-            ));
+            if review_focus.is_none() {
+                overlays.push(Self::doc_selection_highlights(
+                    editor.mode(),
+                    doc,
+                    view,
+                    theme,
+                    &config.cursor_shape,
+                    self.terminal_focused,
+                ));
+            }
             if let Some(overlay) = Self::highlight_focused_view_elements(view, doc, theme) {
                 overlays.push(overlay);
             }
@@ -299,7 +307,7 @@ impl EditorView {
             .selection(view.id)
             .primary()
             .cursor(doc.text().slice(..));
-        if is_focused {
+        if is_focused && review_focus.is_none() {
             decorations.add_decoration(text_decorations::Cursor {
                 cache: &editor.cursor_cache,
                 primary_cursor,
@@ -311,6 +319,23 @@ impl EditorView {
             .diagnostics_handler
             .show_cursorline_diagnostics(doc, view.id);
         let inline_diagnostic_config = config.inline_diagnostics.prepare(width, enable_cursor_line);
+        if let Some(annotations) = doc.review_annotations(width) {
+            let selected = review_focus.and_then(|f| annotations.position(f));
+            if selected.is_some() {
+                editor.cursor_cache.set(None);
+            }
+            decorations.add_decoration(text_decorations::ReviewComments {
+                annotations,
+                selected,
+                caret_col: caret.map(|(_, col)| col),
+                has_guide_column: inner.x > view.area.x,
+                cache: &editor.cursor_cache,
+                style: theme.get("ui.virtual.review"),
+                body_style: theme.get("ui.text"),
+                selected_style: theme.get("ui.selection.primary"),
+                cursor_style: theme.get("ui.cursor.primary"),
+            });
+        }
         if let Some(hunk) = view.inline_hunk(doc) {
             decorations.add_decoration(super::git::HunkDecoration::new(
                 hunk,
@@ -1118,6 +1143,22 @@ impl EditorView {
         cxt.editor.autoinfo = self.keymaps.sticky().map(|node| node.infobox());
 
         let mut execute_command = |command: &commands::MappableCommand| {
+            let (view, doc) = current_ref!(cxt.editor);
+            if doc.review_focus(view.id).is_some()
+                && !matches!(
+                    command.name(),
+                    "move_visual_line_up"
+                        | "move_visual_line_down"
+                        | "review_comment"
+                        | "comments"
+                        | "comments-yank"
+                        | "command_mode"
+                )
+            {
+                cxt.editor
+                    .set_status("Comment selected · Enter to edit · Esc to return to code");
+                return;
+            }
             command.execute(cxt);
             helix_event::dispatch(PostCommand { command, cx: cxt });
 
@@ -1187,6 +1228,21 @@ impl EditorView {
     }
 
     fn command_mode(&mut self, mode: Mode, cxt: &mut commands::Context, event: KeyEvent) {
+        let (view, doc) = current!(cxt.editor);
+        if doc.review_focus(view.id).is_some() && self.keymaps.pending().is_empty() {
+            match event {
+                key!(Enter) | key!('i') | key!('e') => {
+                    commands::review_comment(cxt);
+                    return;
+                }
+                key!(Esc) => {
+                    doc.set_review_focus(view.id, None);
+                    return;
+                }
+                key!('.') => return,
+                _ => (),
+            }
+        }
         match (event, cxt.editor.count) {
             // If the count is already started and the input is a number, always continue the count.
             (key!(i @ '0'..='9'), Some(count)) => {
@@ -1451,6 +1507,23 @@ impl EditorView {
         match kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 let editor = &mut cxt.editor;
+                let hit = editor.tree.views().find_map(|(view, _)| {
+                    let doc = &editor.documents[&view.doc];
+                    view.review_at_screen_coords(doc, row, column)
+                        .map(|focus| (view.id, focus))
+                });
+                if let Some((view_id, focus)) = hit.filter(|_| editor.mode == Mode::Normal) {
+                    self.focus_view(editor, view_id);
+                    let (view, doc) = current!(editor);
+                    if let Some((anchor, _)) = doc
+                        .review_annotations(view.inner_width(doc))
+                        .and_then(|notes| notes.position(focus))
+                    {
+                        doc.set_selection(view.id, Selection::point(anchor));
+                        doc.set_review_focus(view.id, Some(focus));
+                    }
+                    return EventResult::Consumed(None);
+                }
 
                 if let Some((pos, view_id)) = pos_and_view(editor, row, column, true) {
                     self.focus_view(editor, view_id);
@@ -2135,6 +2208,10 @@ impl Component for EditorView {
 
         match event {
             Event::Paste(contents) => {
+                let (view, doc) = current_ref!(cx.editor);
+                if doc.review_focus(view.id).is_some() {
+                    return EventResult::Consumed(None);
+                }
                 self.handle_non_key_input(&mut cx);
                 cx.count = cx.editor.count;
                 commands::paste_bracketed_value(&mut cx, contents.clone());

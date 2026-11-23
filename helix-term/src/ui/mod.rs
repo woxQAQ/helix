@@ -13,6 +13,7 @@ pub mod overlay;
 pub mod picker;
 pub mod popup;
 pub mod prompt;
+pub(crate) mod review_input;
 mod select;
 mod spinner;
 mod statusline;

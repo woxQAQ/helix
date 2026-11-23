@@ -140,6 +140,9 @@ pub enum DocumentOpenError {
 
 pub struct Document {
     pub(crate) id: DocumentId,
+    pub(crate) comments: Vec<crate::review::Comment>,
+    pub(crate) review_draft: Option<crate::review::ReviewDraft>,
+    pub(crate) review_notes: OnceLock<Vec<crate::review::ReviewNote>>,
     text: Rope,
     selections: HashMap<ViewId, Selection>,
     view_data: HashMap<ViewId, ViewData>,
@@ -755,6 +758,9 @@ impl Document {
 
         Self {
             id: DocumentId::default(),
+            comments: Vec::new(),
+            review_draft: None,
+            review_notes: OnceLock::new(),
             active_snippet: None,
             path: None,
             relative_path: OnceLock::new(),
@@ -1496,6 +1502,7 @@ impl Document {
                 })
             });
         }
+        self.set_review_focus(view_id, None);
         self.selections.insert(view_id, selection);
         helix_event::dispatch(SelectionDidChange {
             doc: self,
@@ -1747,6 +1754,7 @@ impl Document {
             }
         }
 
+        self.review_notes.take();
         true
     }
 
@@ -1981,19 +1989,23 @@ impl Document {
         current_revision
     }
 
+    pub(crate) fn committed_changes_since(&self, revision: usize) -> Option<Transaction> {
+        let history = self.history.take();
+        let committed = (history.current_revision() != revision)
+            .then(|| history.changes_since(revision))
+            .flatten();
+        self.history.set(history);
+        committed
+    }
+
     /// Maps a selection of the text at history revision `revision` to the current text.
     pub(crate) fn map_selection_from_revision(
         &self,
         selection: &Selection,
         revision: usize,
     ) -> Selection {
-        let history = self.history.take();
-        let committed = (history.current_revision() != revision)
-            .then(|| history.changes_since(revision))
-            .flatten();
-        self.history.set(history);
         let mut selection = selection.clone();
-        if let Some(committed) = committed {
+        if let Some(committed) = self.committed_changes_since(revision) {
             selection = selection.map(committed.changes());
         }
         selection
@@ -2218,6 +2230,15 @@ impl Document {
     #[inline]
     pub fn selections(&self) -> &HashMap<ViewId, Selection> {
         &self.selections
+    }
+
+    pub fn review_focus(&self, view: ViewId) -> Option<crate::review::ReviewFocus> {
+        let focus = self.view_data.get(&view)?.review_focus?;
+        self.review_text(focus.id).map(|_| focus)
+    }
+
+    pub fn set_review_focus(&mut self, view: ViewId, focus: Option<crate::review::ReviewFocus>) {
+        self.view_data_mut(view).review_focus = focus;
     }
 
     fn view_data(&self, view_id: ViewId) -> &ViewData {
@@ -2733,6 +2754,7 @@ impl Document {
 
 #[derive(Debug, Default)]
 pub struct ViewData {
+    review_focus: Option<crate::review::ReviewFocus>,
     view_position: ViewPosition,
 }
 

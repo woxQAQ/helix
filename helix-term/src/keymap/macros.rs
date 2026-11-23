@@ -79,6 +79,10 @@ macro_rules! alt {
 /// ```
 #[macro_export]
 macro_rules! keymap {
+    (@trie $command:literal) => {
+        $crate::keymap::KeyTrie::MappableCommand($command.parse().expect("invalid keymap command"))
+    };
+
     (@trie $cmd:ident) => {
         $crate::keymap::KeyTrie::MappableCommand($crate::commands::MappableCommand::$cmd)
     };

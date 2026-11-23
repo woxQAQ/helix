@@ -1,8 +1,35 @@
 use std::collections::HashMap;
 
-use super::macros::keymap;
+use super::macros::{key, keymap};
 use super::{KeyTrie, Mode};
 use helix_core::hashmap;
+
+/// Fill the review prefix from session defaults while giving configured keys precedence.
+pub(crate) fn add_review_bindings(keys: &mut HashMap<Mode, KeyTrie>) {
+    let menu = keymap!({ "Review comments"
+        "c" => review_comment,
+        "p" => ":comments",
+        "y" => ":comments-yank",
+    });
+    for mode in [Mode::Normal, Mode::Select] {
+        let Some(space) = keys
+            .get_mut(&mode)
+            .and_then(KeyTrie::node_mut)
+            .and_then(|root| root.get_mut(&key!(' ')))
+            .and_then(KeyTrie::node_mut)
+        else {
+            continue;
+        };
+        let mut bindings = menu.clone();
+        if let Some(configured) = space.get_mut(&key!('n')) {
+            let Some(node) = configured.node_mut() else {
+                continue;
+            };
+            bindings.node_mut().unwrap().merge(std::mem::take(node));
+        }
+        space.insert(key!('n'), bindings);
+    }
+}
 
 pub fn default() -> HashMap<Mode, KeyTrie> {
     let normal = keymap!({ "Normal mode"

@@ -1259,6 +1259,7 @@ pub struct Editor {
     pub tree: Tree,
     pub next_document_id: DocumentId,
     pub documents: BTreeMap<DocumentId, Document>,
+    pub review: Option<crate::review::Review>,
 
     // We Flatten<> to resolve the inner DocumentSavedEventFuture. For that we need a stream of streams, hence the Once<>.
     // https://stackoverflow.com/a/66875668
@@ -1413,6 +1414,7 @@ impl Editor {
             tree: Tree::new(area),
             next_document_id: DocumentId::default(),
             documents: BTreeMap::new(),
+            review: None,
             saves: HashMap::new(),
             save_queue: SelectAll::new(),
             write_count: 0,
@@ -2030,6 +2032,9 @@ impl Editor {
         self.next_document_id =
             DocumentId(unsafe { NonZeroUsize::new_unchecked(self.next_document_id.0.get() + 1) });
         doc.id = id;
+        if let Some(review) = &mut self.review {
+            review.reopen(&mut doc);
+        }
         self.documents.insert(id, doc);
 
         let (save_sender, save_receiver) = tokio::sync::mpsc::unbounded_channel();
@@ -2182,7 +2187,10 @@ impl Editor {
             }
         }
 
-        let doc = self.documents.remove(&doc_id).unwrap();
+        let mut doc = self.documents.remove(&doc_id).unwrap();
+        if let Some(review) = &mut self.review {
+            review.close(&mut doc);
+        }
 
         // If the document we removed was visible in all views, we will have no more views. We don't
         // want to close the editor just for a simple buffer close, so we need to create a new view

@@ -314,6 +314,7 @@ This layer is a kludge of mappings, mostly pickers.
 | `b`     | Open buffer picker                                                      | `buffer_picker`                            |
 | `j`     | Open jumplist picker                                                    | `jumplist_picker`                          |
 | `g`     | Open changed file picker                                                | `changed_file_picker`                      |
+| `n`     | Open the [review comments menu](./usage.md#reviewing-a-repository) in `hx --comments` | N/A |
 | `v`     | Open Git menu                                                           | N/A                                        |
 | `l`     | Open lazygit in a floating terminal                                      | `lazygit`                                  |
 | `G`     | Debug (experimental)                                                    | N/A                                        |

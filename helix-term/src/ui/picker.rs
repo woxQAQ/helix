@@ -261,6 +261,7 @@ pub struct Picker<T: 'static + Send + Sync, D: 'static> {
     widths: Vec<Constraint>,
 
     callback_fn: PickerCallback<T>,
+    delete_selection: Option<fn(&mut Context, &T) -> Vec<T>>,
     default_action: Action,
 
     pub truncate_start: bool,
@@ -389,6 +390,7 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
             truncate_start: true,
             show_preview: true,
             callback_fn: Box::new(callback_fn),
+            delete_selection: None,
             default_action: Action::Replace,
             completion_height: 0,
             widths,
@@ -450,6 +452,12 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
         };
         helix_event::send_blocking(&handler, event);
         self.dynamic_query_handler = Some(handler);
+        self
+    }
+
+    /// Delete the selected entry and return the current items for the same search.
+    pub fn with_delete(mut self, delete: fn(&mut Context, &T) -> Vec<T>) -> Self {
+        self.delete_selection = Some(delete);
         self
     }
 
@@ -705,12 +713,13 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
         let background = cx.editor.theme.get("ui.background");
         surface.clear_with(area, background);
 
-        const BLOCK: Block<'_> = Block::bordered();
-
-        // calculate the inner area inside the box
-        let inner = BLOCK.inner(area);
-
-        BLOCK.render(area, surface);
+        let block = if self.delete_selection.is_some() {
+            Block::bordered().title(" Enter: open · Delete: remove ")
+        } else {
+            Block::bordered()
+        };
+        let inner = block.inner(area);
+        block.render(area, surface);
 
         // -- Render the input bar:
 
@@ -1109,6 +1118,19 @@ impl<I: 'static + Send + Sync, D: 'static + Send + Sync> Component for Picker<I,
                 };
             EventResult::Consumed(Some(callback))
         };
+
+        if let (key!(Delete), Some(delete)) = (key_event, self.delete_selection) {
+            if let Some(selected) = self.selection() {
+                let remaining = delete(ctx, selected);
+                self.matcher.restart(true);
+                self.cursor = 0;
+                let injector = self.matcher.injector();
+                for item in remaining {
+                    inject_nucleo_item(&injector, &self.columns, item, &self.editor_data);
+                }
+            }
+            return EventResult::Consumed(None);
+        }
 
         match key_event {
             shift!(Tab) | key!(Up) | ctrl!('p') => {

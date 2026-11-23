@@ -15,6 +15,26 @@ Helix is a modal editor, meaning it has different modes for different tasks. The
 * [Insert mode](./keymap.md#insert-mode): For typing text directly into the document. Access by typing `i` in normal mode.
 * [Select/extend mode](./keymap.md#select--extend-mode): For making selections and performing operations on them. Access by typing `v` in normal mode.
 
+## Reviewing a repository
+
+Run `hx --comments .` to open the file picker and start a review session. Use normal editing commands, including `gd` for go-to-definition and `gr` for references when the language server supports them.
+
+Press `Space n` in Normal or Select mode to see the review menu. For a new comment, type the text and press `Enter` to add it or `Esc` to cancel.
+
+| Keys | Command | Action |
+| --- | --- | --- |
+| `Space n c` | `:comment Check the error path` | Comment on the current line or the primary multiline selection. For example, `2x` selects two lines. |
+| `Space n p` | `:comments` | Search all session comments. Press `Enter` to jump to the target or `Delete` to remove the highlighted comment. |
+| `Space n y` | `:comments-yank` | Copy the full report to the system clipboard. |
+
+A block comment has a guide beside its source lines, running from the first line to the frame below the last. The frame header shows the inclusive range, such as `L12–L15`. In Normal mode, move through the frame with `j` and `k`, or click a comment row. Press `Enter`, `i`, or `Space n c` to edit its text directly inside the frame. Use the arrow keys to move the caret and `Alt-Enter` to insert a newline. `Enter` saves the draft and `Esc` cancels it. Press `Esc` on a comment row to return to the source cursor. Select mode continues to select source text across comments.
+
+Comment text wraps to the width of each split. The frame uses `ui.virtual.review` and the body uses `ui.text`. Copying and saving the source buffer includes only source text.
+
+Comment text is literal, including spaces, quotes and `%` expressions. Comments belong to the session and survive closing a file buffer. The report uses the current buffer's line numbers, including unsaved edits. For closed buffers it uses their last reviewed text. A fully deleted target stays in the report with `(target removed)` beside its nearest position. Undoing the deletion in the same buffer restores the original anchor.
+
+Helix prints the report to stdout on exit. For example, `hx --comments . | save review.txt` in Nushell saves it for later. Each entry contains the path, a one-based line or inclusive line range when applicable, and the comment text.
+
 ## Buffers
 
 Buffers are in-memory representations of files. You can have multiple buffers open at once. Use [pickers](./pickers.md) or commands like `:buffer-next` and `:buffer-previous` to open buffers or switch between them.

@@ -46,6 +46,7 @@ ARGS:
 FLAGS:
     -h, --help                     Print help information
     --strict                       Bail on error for commands that can fail.
+    --comments                     Review files and print comments to stdout on exit
     --tutor                        Load the tutorial
     --health [CATEGORY]            Check for potential errors in editor setup
                                    CATEGORY can be a language or one of 'clipboard', 'languages',
@@ -149,6 +150,11 @@ FLAGS:
     let mut events = app.event_stream();
 
     let exit_code = app.run(&mut events).await?;
+    if let Some(review) = &app.editor.review {
+        use std::io::Write;
+        let report = review.report(&app.editor);
+        std::io::stdout().lock().write_all(report.as_bytes())?;
+    }
 
     Ok(exit_code)
 }

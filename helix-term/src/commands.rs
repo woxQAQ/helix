@@ -405,6 +405,7 @@ impl MappableCommand {
         insert_mode, "Insert before selection",
         append_mode, "Append after selection",
         command_mode, "Enter command mode",
+        review_comment, "Add a review comment or edit the focused comment",
         file_picker, "Open file picker",
         file_picker_in_current_buffer_directory, "Open file picker at current buffer's directory",
         file_picker_in_current_directory, "Open file picker at current working directory",
@@ -834,21 +835,99 @@ fn move_line_down(cx: &mut Context) {
 }
 
 fn move_visual_line_up(cx: &mut Context) {
-    move_impl(
-        cx,
-        move_vertically_visual,
-        Direction::Backward,
-        Movement::Move,
-    )
+    move_visual_row(cx, Direction::Backward);
 }
 
 fn move_visual_line_down(cx: &mut Context) {
-    move_impl(
-        cx,
-        move_vertically_visual,
-        Direction::Forward,
-        Movement::Move,
-    )
+    move_visual_row(cx, Direction::Forward);
+}
+
+fn move_visual_row(cx: &mut Context, dir: Direction) {
+    if cx.editor.mode() == Mode::Normal && cx.editor.review.is_some() && cx.count() == 1 {
+        let (view, doc) = current!(cx.editor);
+        if move_review_row(view, doc, dir) {
+            return;
+        }
+    }
+    move_impl(cx, move_vertically_visual, dir, Movement::Move);
+}
+
+/// A review row belongs to the view. Keep the source selection intact until leaving the frame.
+fn move_review_row(view: &View, doc: &mut Document, dir: Direction) -> bool {
+    let width = view.inner_width(doc);
+    let Some(notes) = doc.review_annotations(width) else {
+        return false;
+    };
+    let focus = doc.review_focus(view.id);
+    let text = doc.text().slice(..);
+    let fmt = doc.text_format(width, None);
+    let mut annotations = view.text_annotations(doc, None);
+    let selection = doc.selection(view.id);
+    if selection.len() != 1 {
+        return false;
+    }
+    let forward = dir == Direction::Forward;
+    let (anchor, next_row) = if let Some((anchor, offset)) = focus.and_then(|f| notes.position(f)) {
+        (
+            anchor,
+            if forward {
+                Some(offset)
+            } else {
+                offset.checked_sub(2)
+            },
+        )
+    } else {
+        let range = selection.primary();
+        let cursor = range.cursor(text);
+        let next =
+            move_vertically_visual(text, range, dir, 1, Movement::Move, &fmt, &mut annotations)
+                .cursor(text);
+        let line = text.char_to_line(cursor);
+        let destination = text.char_to_line(next);
+        if destination == line && !(forward && line + 1 == text.len_lines() && next == cursor) {
+            return false;
+        }
+        let anchor = line_end_char_index(&text, if forward { line } else { destination });
+        if doc.folds(view.id).iter().any(|fold| fold.contains(&anchor)) {
+            return false;
+        }
+        let index = if forward {
+            Some(0)
+        } else {
+            notes.rows_at(anchor).count().checked_sub(1)
+        };
+        (anchor, index)
+    };
+    let target = next_row
+        .and_then(|row| notes.rows_at(anchor).nth(row))
+        .map(|row| row.focus);
+    drop(annotations);
+    if let Some(target) = target {
+        doc.set_review_focus(view.id, Some(target));
+        return true;
+    }
+    if focus.is_none() {
+        return false;
+    }
+    let line = text.char_to_line(anchor);
+    if forward && line + 1 == text.len_lines() {
+        return true;
+    }
+    let cursor = selection.primary().cursor(text);
+    let annotations = view.text_annotations(doc, None);
+    let col = visual_offset_from_block(text, cursor, cursor, &fmt, &annotations)
+        .0
+        .col;
+    let anchor = if forward {
+        text.line_to_char(line + 1)
+    } else {
+        anchor
+    };
+    let (target, _) =
+        helix_core::char_idx_at_visual_offset(text, anchor, 0, col, &fmt, &annotations);
+    drop(annotations);
+    doc.set_selection(view.id, Selection::point(target));
+    true
 }
 
 fn extend_char_left(cx: &mut Context) {

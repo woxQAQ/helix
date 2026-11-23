@@ -353,6 +353,7 @@ These scopes are used for theming the editor interface:
 | `ui.virtual.ruler`                | Ruler columns (see the [`editor.rulers` config][editor-section])                               |
 | `ui.virtual.whitespace`           | Visible whitespace characters                                                                  |
 | `ui.virtual.indent-guide`         | Vertical indent width guides                                                                   |
+| `ui.virtual.review`               | Review comments displayed below the code in a `--comments` session                             |
 | `ui.virtual.blame`                | Current-line Git blame; falls back to `ui.virtual.inlay-hint`                                 |
 | `ui.virtual.inlay-hint`           | Default style for inlay hints of all kinds                                                     |
 | `ui.virtual.inlay-hint.parameter` | Style for inlay hints of kind `parameter` (language servers are not required to set a kind)    |

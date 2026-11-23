@@ -242,7 +242,10 @@ impl View {
             .layout
             .iter()
             .map(|gutter| gutter.width(self, doc) as u16)
-            .sum();
+            .sum::<u16>();
+        let total_width = total_width.saturating_add(u16::from(
+            !doc.comments.is_empty() || doc.review_draft.is_some(),
+        ));
         if total_width < self.area.width {
             total_width
         } else {
@@ -290,7 +293,13 @@ impl View {
             )
         };
 
-        let cursor = doc.selection(self.id).primary().cursor(doc_text);
+        let review_position = doc
+            .review_caret(self.id, viewport.width)
+            .map(|(focus, _)| focus)
+            .or_else(|| doc.review_focus(self.id))
+            .and_then(|focus| doc.review_annotations(viewport.width)?.position(focus));
+        let (cursor, virtual_row) = review_position
+            .unwrap_or_else(|| (doc.selection(self.id).primary().cursor(doc_text), 0));
         let mut offset = view_offset;
         let off = visual_offset_from_anchor(
             doc_text,
@@ -299,7 +308,11 @@ impl View {
             &text_fmt,
             &annotations,
             vertical_viewport_end,
-        );
+        )
+        .map(|(mut pos, block)| {
+            pos.row += virtual_row;
+            (pos, block)
+        });
 
         let (new_anchor, at_top) = match off {
             Ok((visual_pos, _)) if visual_pos.row < scrolloff_top + offset.vertical_offset => {
@@ -324,13 +337,17 @@ impl View {
             } else {
                 viewport.height as isize - scrolloff_bottom as isize - 1
             };
-            (offset.anchor, offset.vertical_offset) =
-                char_idx_at_visual_offset(doc_text, cursor, -v_off, 0, &text_fmt, &annotations);
+            let delta = virtual_row as isize - v_off;
+            (offset.anchor, offset.vertical_offset) = if delta > 0 && review_position.is_some() {
+                (cursor, delta as usize)
+            } else {
+                char_idx_at_visual_offset(doc_text, cursor, delta, 0, &text_fmt, &annotations)
+            };
         }
 
         if text_fmt.soft_wrap {
             offset.horizontal_offset = 0;
-        } else {
+        } else if review_position.is_none() {
             // determine the current visual column of the text
             let col = off
                 .unwrap_or_else(|_| {
@@ -484,6 +501,10 @@ impl View {
     ) -> TextAnnotations<'a> {
         let mut text_annotations = TextAnnotations::default();
         text_annotations.set_folds(doc.folds(self.id));
+        let width = self.inner_width(doc);
+        if let Some(comments) = doc.review_annotations(width) {
+            text_annotations.add_line_annotation(Box::new(comments));
+        }
         if let Some(hunk) = self.inline_hunk(doc) {
             text_annotations.add_line_annotation(hunk.line_annotation());
         }
@@ -535,7 +556,6 @@ impl View {
             }
         }
 
-        let width = self.inner_width(doc);
         let enable_cursor_line = self
             .diagnostics_handler
             .show_cursorline_diagnostics(doc, self.id);
@@ -634,6 +654,51 @@ impl View {
             &self.text_annotations(doc, None),
             ignore_virtual_text,
         )
+    }
+
+    /// Identify a review row within the same formatted text used by mouse hit testing.
+    pub fn review_at_screen_coords(
+        &self,
+        doc: &Document,
+        row: u16,
+        column: u16,
+    ) -> Option<crate::review::ReviewFocus> {
+        let inner = self.inner_area(doc);
+        if row < inner.y || row >= inner.bottom() || column < inner.x || column >= inner.right() {
+            return None;
+        }
+        let notes = doc.review_annotations(inner.width)?;
+        let offset = doc.view_offset(self.id);
+        let screen_row = usize::from(row - inner.y) + offset.vertical_offset;
+        let text = doc.text().slice(..);
+        let fmt = doc.text_format(inner.width, None);
+        let annotations = self.text_annotations(doc, None);
+        let (anchor, mut virtual_row) = char_idx_at_visual_offset(
+            text,
+            offset.anchor,
+            screen_row as isize,
+            0,
+            &fmt,
+            &annotations,
+        );
+        if anchor == text.len_chars() && virtual_row == 0 {
+            let eof = visual_offset_from_anchor(
+                text,
+                offset.anchor,
+                anchor,
+                &fmt,
+                &annotations,
+                screen_row + 1,
+            )
+            .ok()?
+            .0;
+            virtual_row = screen_row.checked_sub(eof.row)?;
+        }
+        let focus = notes
+            .rows_at(anchor)
+            .nth(virtual_row.checked_sub(1)?)?
+            .focus;
+        Some(focus)
     }
 
     pub fn pos_at_visual_coords(

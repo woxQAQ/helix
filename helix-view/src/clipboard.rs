@@ -300,17 +300,23 @@ mod external {
                 },
                 #[cfg(feature = "term")]
                 Self::Termcode => {
-                    use std::io::Write;
+                    use std::io::{IsTerminal, Write};
                     use termina::escape::osc::{self, Osc};
                     let selection = match clipboard_type {
                         ClipboardType::Clipboard => osc::Selection::CLIPBOARD,
                         ClipboardType::Selection => osc::Selection::PRIMARY,
                     };
-                    // NOTE: it would be ideal to have the terminal execute this but it _should_
-                    // work to send this over stdout instead.
-                    let mut stdout = std::io::stdout().lock();
-                    write!(stdout, "{}", Osc::SetSelection(selection, content))?;
-                    stdout.flush()?;
+                    let command = Osc::SetSelection(selection, content);
+                    let stdout = std::io::stdout();
+                    if stdout.is_terminal() {
+                        let mut stdout = stdout.lock();
+                        write!(stdout, "{command}")?;
+                        stdout.flush()?;
+                    } else {
+                        let device = if cfg!(windows) { "CONOUT$" } else { "/dev/tty" };
+                        let mut tty = std::fs::OpenOptions::new().write(true).open(device)?;
+                        write!(tty, "{command}")?;
+                    }
                     Ok(())
                 }
                 Self::Custom(command_provider) => match clipboard_type {

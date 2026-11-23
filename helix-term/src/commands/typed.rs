@@ -3046,7 +3046,100 @@ const WRITE_NO_CODE_ACTIONS_FLAG: Flag = Flag {
     ..Flag::DEFAULT
 };
 
+fn review_session(editor: &Editor) -> anyhow::Result<&helix_view::review::Review> {
+    editor
+        .review
+        .as_ref()
+        .context("Start Helix with --comments to review files")
+}
+
+fn comment(cx: &mut compositor::Context, args: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+    cx.editor.add_review_comment(args[0].to_owned())?;
+    cx.editor.set_status("Comment added");
+    Ok(())
+}
+
+fn comments_yank(cx: &mut compositor::Context, _: Args, event: PromptEvent) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+    let report = review_session(cx.editor)?.report(cx.editor);
+    ensure!(!report.is_empty(), "No review comments");
+    ensure!(
+        cx.editor.registers.clipboard_provider_name() != "none",
+        "No system clipboard provider configured"
+    );
+    cx.editor.registers.write('+', vec![report])?;
+    cx.editor.set_status("Copied review comments");
+    Ok(())
+}
+
+fn comments(cx: &mut compositor::Context, _: Args, event: PromptEvent) -> anyhow::Result<()> {
+    use helix_view::review::Entry;
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+    let entries = review_session(cx.editor)?.entries(cx.editor);
+    ensure!(!entries.is_empty(), "No review comments");
+    cx.jobs.callback(async move {
+        Ok(Callback::EditorCompositor(Box::new(
+            move |_, compositor| {
+                let columns = [
+                    PickerColumn::new("location", |entry: &Entry, _| entry.location().into()),
+                    PickerColumn::new("comment", |entry: &Entry, _| entry.text.as_str().into()),
+                ];
+                let picker = Picker::new(columns, 1, entries, (), |cx, entry, action| {
+                    if let Err(err) = cx.editor.open(&entry.path, action) {
+                        cx.editor.set_error(err.to_string());
+                        return;
+                    }
+                    let (view, doc) = current!(cx.editor);
+                    if let Some(range) = entry.range(doc) {
+                        doc.set_selection(view.id, Selection::from(range));
+                        align_view(doc, view, Align::Center);
+                    }
+                })
+                .with_delete(|cx, entry| {
+                    if entry.remove(cx.editor) {
+                        cx.editor.set_status("Comment deleted");
+                    }
+                    cx.editor.review.as_ref().unwrap().entries(cx.editor)
+                });
+                compositor.push(Box::new(overlaid(picker)));
+            },
+        )))
+    });
+    Ok(())
+}
+
 pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
+    TypableCommand {
+        name: "comment",
+        aliases: &[],
+        doc: "Comment on the current line or multiline selection. For example, :comment Check the error path.",
+        fun: comment,
+        completer: CommandCompleter::none(),
+        signature: Signature { positionals: (1, Some(1)), raw_after: Some(0), literal_raw: true, ..Signature::DEFAULT },
+    },
+    TypableCommand {
+        name: "comments",
+        aliases: &[],
+        doc: "Open the review comment picker. Press Enter to jump or Delete to remove the selected comment.",
+        fun: comments,
+        completer: CommandCompleter::none(),
+        signature: Signature { positionals: (0, Some(0)), ..Signature::DEFAULT },
+    },
+    TypableCommand {
+        name: "comments-yank",
+        aliases: &[],
+        doc: "Copy the session's review comments to the system clipboard.",
+        fun: comments_yank,
+        completer: CommandCompleter::none(),
+        signature: Signature { positionals: (0, Some(0)), ..Signature::DEFAULT },
+    },
     TypableCommand {
         name: "exit",
         aliases: &["x", "xit"],
@@ -4229,7 +4322,16 @@ pub(super) fn execute_command(
     (cmd.fun)(cx, args, event).map_err(|err| anyhow!("'{}': {err}", cmd.name))
 }
 
-#[allow(clippy::unnecessary_unwrap)]
+pub(crate) fn review_comment(cx: &mut Context) {
+    if let Err(err) = cx.editor.begin_review_edit() {
+        cx.editor.set_error(err.to_string());
+        return;
+    }
+    let (view, doc) = current_ref!(cx.editor);
+    let input = ui::review_input::ReviewInput::new(cx.editor, doc.id(), view.id);
+    cx.push_layer(Box::new(input));
+}
+
 pub(super) fn command_mode(cx: &mut Context) {
     // Keep the register selected before `:` (as in `"a:yank-join`) for the typed command.
     let register = cx.register;
@@ -4248,7 +4350,6 @@ pub(super) fn command_mode(cx: &mut Context) {
     );
     prompt.doc_fn = Box::new(command_line_doc);
 
-    // Calculate initial completion
     prompt.recalculate_completion(cx.editor);
     cx.push_layer(Box::new(prompt));
 }

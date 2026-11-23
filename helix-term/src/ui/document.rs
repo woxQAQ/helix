@@ -25,6 +25,8 @@ pub struct LinePos {
     pub doc_line: usize,
     /// Vertical offset from the top of the inner view area
     pub visual_line: u16,
+    /// Character index of a document newline or EOF when this visual row ends a logical line.
+    pub end_char: Option<usize>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -85,6 +87,7 @@ pub fn render_text(
         first_visual_line: false,
         doc_line: usize::MAX,
         visual_line: u16::MAX,
+        end_char: None,
     };
     let mut last_line_end = 0;
     let mut is_in_indent_area = true;
@@ -107,7 +110,7 @@ pub fn render_text(
         }
 
         // if the end of the viewport is reached stop rendering
-        if grapheme.visual_pos.row as u16 >= renderer.viewport.height + renderer.offset.row as u16 {
+        if grapheme.visual_pos.row >= renderer.viewport.height as usize + renderer.offset.row {
             break;
         }
 
@@ -127,6 +130,7 @@ pub fn render_text(
                 first_visual_line: grapheme.line_idx != last_line_pos.doc_line,
                 doc_line: grapheme.line_idx,
                 visual_line: grapheme.visual_pos.row as u16,
+                end_char: None,
             };
             decorations.decorate_line(renderer, last_line_pos);
         }
@@ -154,6 +158,10 @@ pub fn render_text(
                 overlay_style: overlay_highlighter.style,
             }
         };
+        if !grapheme.is_virtual() && (grapheme.raw == Grapheme::Newline || grapheme.source.is_eof())
+        {
+            last_line_pos.end_char = Some(grapheme.char_idx);
+        }
         decorations.decorate_grapheme(renderer, &grapheme);
 
         let virt = grapheme.is_virtual();

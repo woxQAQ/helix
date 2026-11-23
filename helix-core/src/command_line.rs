@@ -130,6 +130,8 @@ pub struct Signature {
     /// * `:toggle --bar foo` has one positional "foo" and one flag "--bar".
     /// * `:toggle --bar foo --baz` has two positionals `["foo", "--baz"]` and one flag "--bar".
     pub raw_after: Option<u8>,
+    /// Treat the raw trailing argument as literal text, including percent expansions.
+    pub literal_raw: bool,
     /// A set of flags that a command may accept.
     ///
     /// See the `Flag` struct for more info.
@@ -147,6 +149,7 @@ impl Signature {
     pub const DEFAULT: Self = Self {
         positionals: (0, None),
         raw_after: None,
+        literal_raw: false,
         flags: &[],
         _dummy: (),
     };
@@ -787,7 +790,12 @@ impl<'a> Args<'a> {
             .is_some_and(|max| self.len() >= max as usize)
         {
             self.only_positionals = true;
-            Ok(parser.rest())
+            Ok(parser.rest().map(|mut token| {
+                if self.signature.literal_raw {
+                    token.kind = TokenKind::Unquoted;
+                }
+                token
+            }))
         } else {
             parser.next().transpose()
         }

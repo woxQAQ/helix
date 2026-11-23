@@ -143,6 +143,121 @@ impl<'a> DecorationManager<'a> {
     }
 }
 
+pub(super) struct ReviewComments<'a> {
+    pub annotations: helix_view::review::ReviewAnnotations<'a>,
+    pub selected: Option<(usize, usize)>,
+    pub caret_col: Option<usize>,
+    pub has_guide_column: bool,
+    pub cache: &'a CursorCache,
+    pub body_style: helix_view::theme::Style,
+    pub selected_style: helix_view::theme::Style,
+    pub cursor_style: helix_view::theme::Style,
+    pub style: helix_view::theme::Style,
+}
+
+impl Decoration for ReviewComments<'_> {
+    fn decorate_line(&mut self, renderer: &mut TextRenderer, pos: LinePos) {
+        if self.has_guide_column {
+            if let Some(symbol) = self
+                .annotations
+                .block_guide(pos.doc_line, pos.first_visual_line)
+            {
+                renderer.set_stringn(
+                    renderer.viewport.x - 1,
+                    pos.visual_line,
+                    symbol,
+                    1,
+                    self.style,
+                );
+            }
+        }
+    }
+
+    fn render_virt_lines(
+        &mut self,
+        renderer: &mut TextRenderer,
+        pos: LinePos,
+        offset: Position,
+    ) -> Position {
+        let Some(anchor) = pos.end_char else {
+            return Position::default();
+        };
+        let start = pos.visual_line as usize + offset.row;
+        let visible = renderer.offset.row..renderer.offset.row + renderer.viewport.height as usize;
+        let mut height = 0;
+        use helix_view::{graphics::Rect, review::ReviewRowKind};
+        let width = renderer.viewport.width as usize;
+        let x = renderer.viewport.x;
+        for note in self.annotations.rows_at(anchor) {
+            let row = start + height;
+            if visible.contains(&row) {
+                let selected = self.selected == Some((anchor, height + 1));
+                let style = if selected {
+                    self.style.patch(self.selected_style)
+                } else {
+                    self.style
+                };
+                let y = row as u16;
+                let block = note.multiline_target && self.has_guide_column;
+                if self.has_guide_column
+                    && !block
+                    && self.annotations.block_guide(pos.doc_line, false).is_some()
+                {
+                    renderer.set_stringn(x - 1, row as u16, "│", 1, self.style);
+                }
+                let left = x - u16::from(block);
+                let right = x + width as u16 - 1;
+                match note.kind {
+                    ReviewRowKind::Header | ReviewRowKind::Footer => {
+                        let header = matches!(note.kind, ReviewRowKind::Header);
+                        let corner = match (header, block) {
+                            (true, true) => "├",
+                            (true, false) => "╭",
+                            (false, _) => "╰",
+                        };
+                        let frame_width = usize::from(right - left) + 1;
+                        renderer.set_stringn(
+                            left,
+                            y,
+                            &format!("{corner}{}", "─".repeat(frame_width - 1)),
+                            frame_width,
+                            style,
+                        );
+                        renderer.set_stringn(right, y, if header { "╮" } else { "╯" }, 1, style);
+                        if width > 4 && header {
+                            renderer.set_stringn(
+                                x + 2,
+                                y,
+                                &format!(" {} ", note.text),
+                                width - 3,
+                                style,
+                            );
+                        }
+                    }
+                    ReviewRowKind::Body => {
+                        renderer.set_stringn(left, y, "│", 1, style);
+                        if width > 3 {
+                            renderer.set_stringn(x + 2, y, note.text, width - 3, self.body_style);
+                        }
+                        renderer.set_stringn(right, y, "│", 1, style);
+                    }
+                }
+                if selected {
+                    let col = self.caret_col.unwrap_or(0);
+                    if self.caret_col.is_none() {
+                        renderer.set_style(Rect::new(x, y, width as u16, 1), self.selected_style);
+                        renderer.set_style(Rect::new(x, y, 1, 1), self.cursor_style);
+                    }
+                    self.cache
+                        .set(Some(Position::new(row - renderer.offset.row, col)));
+                }
+            }
+            height += 1;
+        }
+        Position::new(height, 0)
+    }
+}
+
 /// Cursor rendering is done externally so all the cursor decoration
 /// does is save the position of primary cursor
 pub struct Cursor<'a> {

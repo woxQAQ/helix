@@ -393,6 +393,11 @@ impl AppBuilder {
         self
     }
 
+    pub fn with_comments(mut self) -> Self {
+        self.args.comments = true;
+        self
+    }
+
     pub fn with_input_text<S: Into<String>>(mut self, input_text: S) -> Self {
         self.input = Some(test::print(&input_text.into()));
         self

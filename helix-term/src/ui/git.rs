@@ -162,12 +162,37 @@ async fn blame_line(path: &std::path::Path, line: usize, text: String) -> anyhow
             .find_map(|line| line.strip_prefix(prefix))
             .unwrap_or_default()
     };
-    Ok(format!(
-        "{} · {} · {}",
-        &hash[..hash.len().min(8)],
-        field("author "),
-        field("summary ")
-    ))
+    let mut parts = vec![
+        hash[..hash.len().min(8)].to_string(),
+        field("author ").to_string(),
+    ];
+    if let Some(date) = author_date(field("author-time"), field("author-tz")) {
+        parts.push(date);
+    }
+    parts.push(field("summary ").to_string());
+    Ok(parts.join(" · "))
+}
+
+/// Render the porcelain `author-time`/`author-tz` pair as `YYYY-MM-DD` in the
+/// author's zone, keeping the annotation compact next to the blamed line.
+fn author_date(secs: &str, tz: &str) -> Option<String> {
+    let secs: i64 = secs.trim().parse().ok()?;
+    // Porcelain zones look like `+0800`/`-0530`; a plain integer parse keeps the
+    // sign on both components, so `-530` splits into -5 hours and -30 minutes.
+    let tz: i64 = tz.trim().parse().unwrap_or(0);
+    let offset = (tz / 100) * 3600 + (tz % 100) * 60;
+    let days = (secs + offset).div_euclid(86_400);
+    // Howard Hinnant's civil_from_days, converting days since the epoch.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    Some(format!("{year:04}-{month:02}-{day:02}"))
 }
 
 /// Draw at the line end without changing wrapping or document coordinates.

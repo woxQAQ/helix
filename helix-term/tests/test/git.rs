@@ -94,7 +94,16 @@ async fn git_blame_and_hunk_workflow() -> anyhow::Result<()> {
     cx.jobs
         .handle_callback(cx.editor, &mut compositor, Ok(Some(callback)));
     compositor.render(area, &mut surface, &mut cx);
-    assert!(screen(&surface).contains("Test Author · initial subject"));
+    let rendered = screen(&surface);
+    assert!(rendered.contains("Test Author"));
+    assert!(rendered.contains("initial subject"));
+    // The blame annotation carries the commit date between author and summary.
+    assert!(rendered
+        .split_whitespace()
+        .any(|word| word.len() == 10
+            && word.bytes().enumerate().all(|(index, byte)| {
+                matches!(index, 4 | 7) == (byte == b'-') && (byte == b'-' || byte.is_ascii_digit())
+            })));
     assert_eq!(current_ref!(cx.editor).1.text().to_string(), base);
 
     // Unsaved edits hide old blame immediately, then resolve against the buffer snapshot.

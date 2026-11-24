@@ -3080,7 +3080,10 @@ fn comments_yank(cx: &mut compositor::Context, _: Args, event: PromptEvent) -> a
         cx.editor.registers.clipboard_provider_name() != "none",
         "No system clipboard provider configured"
     );
-    cx.editor.registers.write('+', vec![report])?;
+    // report() terminates every entry with '\n' for stdout; drop it for the clipboard.
+    cx.editor
+        .registers
+        .write('+', vec![report.trim_end_matches('\n').to_owned()])?;
     cx.editor.set_status("Copied review comments");
     Ok(())
 }

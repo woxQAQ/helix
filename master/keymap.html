@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "colibri";
             const default_dark_theme = "colibri";
-            window.path_to_searchindex_js = "searchindex-4f396265.js";
+            window.path_to_searchindex_js = "searchindex-2fda8d89.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c2fa7ea4.js"></script>
@@ -633,6 +633,18 @@ shell. Lazygit continues to use a floating terminal.</p>
 <blockquote>
 <p>💡 Global search displays results in a fuzzy picker, use <code>Space + '</code> to bring it back up after opening a file.</p>
 </blockquote>
+<h5 id="markdown-preview"><a class="header" href="#markdown-preview">Markdown preview</a></h5>
+<p><code>:markdown-preview-toggle</code> shows or hides a read-only markdown preview pane on
+the right of the editor views. There is no default keybinding. The pane renders
+the focused buffer as markdown, including syntax-highlighted code blocks, and
+scrolls to the line under the cursor so the preview moves with the source. It
+never takes focus: keys, mouse selection, and the status line stay with the
+buffer. When the window is too narrow for both sides, the pane hides itself and
+returns on resize; its toggled state is kept.</p>
+<p>Bind the command if you want a key for it:</p>
+<pre><code class="language-toml">[keys.normal]
+M = ":markdown-preview-toggle"
+</code></pre>
 <h5 id="git"><a class="header" href="#git">Git</a></h5>
 <p>Press <code>Space v</code> to open the Git menu:</p>
 <div class="table-wrapper">

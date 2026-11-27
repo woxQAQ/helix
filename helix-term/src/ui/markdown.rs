@@ -137,14 +137,48 @@ pub fn highlighted_code_block<'a>(
     Text::from(lines)
 }
 
+/// Markdown rendered into terminal text, together with where its source lines land.
+///
+/// `source_lines` holds `(source line, rendered line)` anchors ordered ascending in both
+/// components. A pane that follows the buffer can look up a rendered line for the cursor's
+/// source line instead of rendering the document once per line.
+pub struct RenderedMarkdown {
+    pub text: Text<'static>,
+    source_lines: Vec<(usize, usize)>,
+}
+
+impl RenderedMarkdown {
+    /// Rendered line that shows the block containing `source_line`.
+    pub fn rendered_line_of(&self, source_line: usize) -> usize {
+        match self
+            .source_lines
+            .binary_search_by_key(&source_line, |&(source, _)| source)
+        {
+            Ok(index) => self.source_lines[index].1,
+            Err(0) => 0,
+            Err(index) => self.source_lines[index - 1].1,
+        }
+    }
+}
+
+/// Records where a source line starts in the rendered text.
+///
+/// Only the first event of a source line is kept: the mapping stays ascending in both components,
+/// which `RenderedMarkdown::rendered_line_of` relies on for its binary search. Events whose range
+/// points backwards are ignored for the same reason.
+fn anchor(source_lines: &mut Vec<(usize, usize)>, source_line: usize, rendered_line: usize) {
+    match source_lines.last() {
+        Some(&(last_source, last_rendered))
+            if last_source >= source_line || last_rendered > rendered_line => {}
+        _ => source_lines.push((source_line, rendered_line)),
+    }
+}
+
 pub struct Markdown {
     contents: String,
 
     config_loader: Arc<ArcSwap<syntax::Loader>>,
 }
-
-// TODO: pre-render and self reference via Pin
-// better yet, just use Tendril + subtendril for references
 
 impl Markdown {
     const TEXT_STYLE: &'static str = "ui.text";
@@ -169,7 +203,15 @@ impl Markdown {
         }
     }
 
-    pub fn parse(&self, theme: Option<&Theme>) -> tui::text::Text<'_> {
+    pub fn parse(&self, theme: Option<&Theme>) -> tui::text::Text<'static> {
+        self.render_document(theme).text
+    }
+
+    /// Renders the document, also recording where its source lines end up.
+    ///
+    /// Callers that only draw the text, like popups, want [`Markdown::parse`]. A preview pane that
+    /// follows the buffer needs the source line mapping to scroll along with the cursor.
+    pub fn render_document(&self, theme: Option<&Theme>) -> RenderedMarkdown {
         fn push_line<'a>(spans: &mut Vec<Span<'a>>, lines: &mut Vec<Spans<'a>>) {
             let spans = std::mem::take(spans);
             if !spans.is_empty() {
@@ -181,11 +223,26 @@ impl Markdown {
         options.insert(Options::ENABLE_STRIKETHROUGH);
         let parser = Parser::new_ext(&self.contents, options);
 
+        // Start offset of every source line, used to translate the byte ranges reported by the
+        // parser into buffer lines.
+        let mut line_starts = vec![0];
+        line_starts.extend(
+            self.contents
+                .match_indices('\n')
+                .map(|(index, _)| index + 1),
+        );
+        let source_line = |offset: usize| {
+            line_starts
+                .partition_point(|&start| start <= offset)
+                .saturating_sub(1)
+        };
+
         // TODO: if possible, render links as terminal hyperlinks: https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda
         let mut tags = Vec::new();
         let mut spans = Vec::new();
         let mut lines = Vec::new();
         let mut list_stack = Vec::new();
+        let mut source_lines = Vec::new();
 
         let get_indent = |level: usize| {
             if level < 1 {
@@ -208,22 +265,26 @@ impl Markdown {
 
         // Transform text in `<code>` blocks into `Event::Code`
         let mut in_code = false;
-        let parser = parser.filter_map(|event| match event {
-            Event::Html(tag)
-                if tag.starts_with("<code") && matches!(tag.chars().nth(5), Some(' ' | '>')) =>
-            {
-                in_code = true;
-                None
-            }
-            Event::Html(tag) if *tag == *"</code>" => {
-                in_code = false;
-                None
-            }
-            Event::Text(text) if in_code => Some(Event::Code(text)),
-            _ => Some(event),
-        });
+        let parser = parser
+            .into_offset_iter()
+            .filter_map(|(event, range)| match event {
+                Event::Html(tag)
+                    if tag.starts_with("<code")
+                        && matches!(tag.chars().nth(5), Some(' ' | '>')) =>
+                {
+                    in_code = true;
+                    None
+                }
+                Event::Html(tag) if *tag == *"</code>" => {
+                    in_code = false;
+                    None
+                }
+                Event::Text(text) if in_code => Some((Event::Code(text), range)),
+                _ => Some((event, range)),
+            });
 
-        for event in parser {
+        for (event, range) in parser {
+            anchor(&mut source_lines, source_line(range.start), lines.len());
             match event {
                 Event::Start(Tag::List(list)) => {
                     // if the list stack is not empty this is a sub list, in that
@@ -299,6 +360,7 @@ impl Markdown {
                             CodeBlockKind::Fenced(language) => language,
                             CodeBlockKind::Indented => "",
                         };
+                        let rendered_start = lines.len();
                         let tui_text = highlighted_code_block(
                             &text,
                             language,
@@ -307,6 +369,17 @@ impl Markdown {
                             None,
                         );
                         lines.extend(tui_text.lines);
+                        // Code blocks are not wrapped, so every source line of the block renders
+                        // as exactly one line and can be anchored precisely.
+                        let rendered_height = lines.len() - rendered_start;
+                        let first_line = source_line(range.start);
+                        for offset in 0..rendered_height {
+                            anchor(
+                                &mut source_lines,
+                                first_line + offset,
+                                rendered_start + offset,
+                            );
+                        }
                     } else {
                         let style = match tags.last() {
                             Some(Tag::Heading { level, .. }) => match level {
@@ -324,11 +397,11 @@ impl Markdown {
                             }
                             _ => text_style,
                         };
-                        spans.push(Span::styled(text, style));
+                        spans.push(Span::styled(text.into_string(), style));
                     }
                 }
                 Event::Code(text) | Event::Html(text) => {
-                    spans.push(Span::styled(text, code_style));
+                    spans.push(Span::styled(text.into_string(), code_style));
                 }
                 Event::SoftBreak | Event::HardBreak => {
                     push_line(&mut spans, &mut lines);
@@ -361,7 +434,10 @@ impl Markdown {
             }
         }
 
-        Text::from(lines)
+        RenderedMarkdown {
+            text: Text::from(lines),
+            source_lines,
+        }
     }
 }
 
@@ -369,9 +445,9 @@ impl Component for Markdown {
     fn render(&mut self, area: Rect, surface: &mut Surface, cx: &mut Context) {
         use tui::widgets::{Paragraph, Widget, Wrap};
 
-        let text = self.parse(Some(&cx.editor.theme));
+        let rendered = self.render_document(Some(&cx.editor.theme));
 
-        let par = Paragraph::new(&text)
+        let par = Paragraph::new(&rendered.text)
             .wrap(Wrap { trim: false })
             .scroll((cx.scroll.unwrap_or_default() as u16, 0));
 
@@ -381,11 +457,11 @@ impl Component for Markdown {
 
     fn required_size(&mut self, viewport: (u16, u16)) -> Option<(u16, u16)> {
         let padding = 2;
-        let contents = self.parse(None);
+        let rendered = self.render_document(None);
 
         // TODO: account for tab width
         let max_text_width = (viewport.0.saturating_sub(padding)).min(120);
-        let (width, height) = crate::ui::text::required_size(&contents, max_text_width);
+        let (width, height) = crate::ui::text::required_size(&rendered.text, max_text_width);
 
         Some((width + padding, height + padding))
     }

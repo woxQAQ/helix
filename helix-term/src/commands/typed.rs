@@ -2817,6 +2817,31 @@ fn set_register(
     cx.editor.registers.write(register, vec![args[1].into()])
 }
 
+fn markdown_preview_toggle(
+    cx: &mut compositor::Context,
+    _args: Args,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    // The editor view owns the pane, and only the compositor can reach it.
+    let callback = async {
+        let call: job::Callback =
+            job::Callback::EditorCompositor(Box::new(|_editor, compositor| {
+                if let Some(view) = compositor.find::<ui::EditorView>() {
+                    view.toggle_markdown_preview();
+                }
+            }));
+        Ok(call)
+    };
+
+    cx.jobs.callback(callback);
+
+    Ok(())
+}
+
 fn redraw(cx: &mut compositor::Context, _args: Args, event: PromptEvent) -> anyhow::Result<()> {
     if event != PromptEvent::Validate {
         return Ok(());
@@ -4142,6 +4167,14 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
             positionals: (0, Some(0)),
             ..Signature::DEFAULT
         },
+    },
+    TypableCommand {
+        name: "markdown-preview-toggle",
+        aliases: &[],
+        doc: "Toggle a read-only markdown preview pane next to the editor. The pane follows the cursor and never takes focus.",
+        fun: markdown_preview_toggle,
+        completer: CommandCompleter::none(),
+        signature: Signature { positionals: (0, Some(0)), ..Signature::DEFAULT },
     },
     TypableCommand {
         name: "run-shell-command",

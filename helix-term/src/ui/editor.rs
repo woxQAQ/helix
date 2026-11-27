@@ -9,6 +9,7 @@ use crate::{
         context_menu::{ContextMenu, MenuItem},
         document::{render_document, LinePos, TextRenderer},
         file_explorer::{FileExplorer, Outcome},
+        markdown_preview::MarkdownPreview,
         statusline,
         terminal::{self, Terminal, TerminalId},
         terminal_panel::TerminalPanel,
@@ -50,6 +51,7 @@ pub struct EditorView {
     terminal_focused: bool,
     pub(super) inline_blame: super::git::InlineBlame,
     file_explorer: Option<FileExplorer>,
+    markdown_preview: Option<MarkdownPreview>,
     bufferline_area: Rect,
     bufferline_tabs: Vec<(Rect, DocumentId)>,
     terminal_statusline: Rect,
@@ -128,6 +130,7 @@ impl EditorView {
             terminal_focused: true,
             inline_blame: super::git::InlineBlame::default(),
             file_explorer: None,
+            markdown_preview: None,
             bufferline_area: Rect::default(),
             bufferline_tabs: Vec::new(),
             terminal_statusline: Rect::default(),
@@ -168,6 +171,15 @@ impl EditorView {
 
     pub fn toggle_inline_blame(&mut self, editor: &mut Editor, jobs: &mut crate::job::Jobs) {
         self.inline_blame.toggle(editor, jobs);
+    }
+
+    /// Shows or hides the markdown preview pane. The pane is toggled from
+    /// `:markdown-preview-toggle` only, so it has no keybinding of its own.
+    pub fn toggle_markdown_preview(&mut self) {
+        self.markdown_preview = self
+            .markdown_preview
+            .is_none()
+            .then(MarkdownPreview::default);
     }
 
     pub fn spinners_mut(&mut self) -> &mut ProgressSpinners {
@@ -2413,6 +2425,11 @@ impl Component for EditorView {
             editor_area = editor_area.clip_top(1);
         }
 
+        // The preview shares the width with the source views while it is shown.
+        if let Some(preview) = &mut self.markdown_preview {
+            editor_area = preview.layout(editor_area, editor_area.width / 2);
+        }
+
         // if the terminal size suddenly changed, we need to trigger a resize
         cx.editor.resize(editor_area);
 
@@ -2435,6 +2452,9 @@ impl Component for EditorView {
         }
 
         self.terminal_panel.render(area, surface, cx);
+        if let Some(preview) = &mut self.markdown_preview {
+            preview.render(surface, cx.editor);
+        }
         self.terminal_statusline = if self.terminal_panel.is_visible() {
             Rect::new(area.x, area.bottom() - 2, area.width, 1)
         } else {

@@ -406,6 +406,23 @@ shell. Lazygit continues to use a floating terminal.
 
 > 💡 Global search displays results in a fuzzy picker, use `Space + '` to bring it back up after opening a file.
 
+##### Markdown preview
+
+`:markdown-preview-toggle` shows or hides a read-only markdown preview pane on
+the right of the editor views. There is no default keybinding. The pane renders
+the focused buffer as markdown, including syntax-highlighted code blocks, and
+scrolls to the line under the cursor so the preview moves with the source. It
+never takes focus: keys, mouse selection, and the status line stay with the
+buffer. When the window is too narrow for both sides, the pane hides itself and
+returns on resize; its toggled state is kept.
+
+Bind the command if you want a key for it:
+
+```toml
+[keys.normal]
+M = ":markdown-preview-toggle"
+```
+
 ##### Git
 
 Press `Space v` to open the Git menu:

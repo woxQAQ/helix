@@ -26,6 +26,7 @@ mod test {
     mod folding;
     mod git;
     mod inline_hunk;
+    mod markdown_preview;
     mod movement;
     mod splits;
     mod terminal;
